@@ -56,7 +56,7 @@ RUN  mkdir -p /usr/libexec/cni/
 COPY ovnkube ovndbchecker /usr/bin/
 COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
-COPY chassis-del.sh git_info /root/
+COPY git_info /root/
 # override the rpm's ovn_k8s.conf with this local copy
 COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
