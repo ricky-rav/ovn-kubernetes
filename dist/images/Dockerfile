@@ -1,4 +1,4 @@
-FROM centos:8 as ovn
+FROM rockylinux/rockylinux:8.4 as ovn
 
 USER root
 
