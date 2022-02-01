@@ -1,4 +1,4 @@
-FROM rockylinux/rockylinux:8.4 as ovn
+FROM rockylinux/rockylinux:8.5 as ovn
 
 USER root
 
