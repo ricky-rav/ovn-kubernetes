@@ -93,11 +93,6 @@ rules:
   - network-attachment-definitions
   verbs: ["list", "get", "watch"]
 - apiGroups:
-  - k8s.ovn.org
-  resources:
-  - icmpnetworkpolicies
-  verbs: ["get", "list", "watch"]
-- apiGroups:
   - k8s.cni.cncf.io
   resources:
   - multi-networkpolicies
