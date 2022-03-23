@@ -3,6 +3,8 @@ package ovn
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/fields"
+	"math/rand"
 	"net"
 	"os"
 	"reflect"
@@ -11,7 +13,9 @@ import (
 	"time"
 
 	kapi "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilwait "k8s.io/apimachinery/pkg/util/wait"
@@ -1253,11 +1257,11 @@ func (oc *Controller) deleteNodeLogicalNetwork(nodeName string) error {
 	return nil
 }
 
-func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) {
+func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) error {
 	// Clean up as much as we can but don't hard error
 	for _, hostSubnet := range hostSubnets {
 		if err := oc.deleteNodeHostSubnet(nodeName, hostSubnet); err != nil {
-			klog.Errorf("Error deleting node %s HostSubnet %v: %v", nodeName, hostSubnet, err)
+			return err
 		} else {
 			util.UpdateUsedHostSubnetsCount(hostSubnet, &oc.v4HostSubnetsUsed, &oc.v6HostSubnetsUsed, false)
 		}
@@ -1266,20 +1270,21 @@ func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) {
 	metrics.RecordSubnetUsage(oc.v4HostSubnetsUsed, oc.v6HostSubnetsUsed)
 
 	if err := oc.deleteNodeLogicalNetwork(nodeName); err != nil {
-		klog.Errorf("Error deleting node %s logical network: %v", nodeName, err)
+		return err
 	}
 
 	if err := oc.gatewayCleanup(nodeName); err != nil {
-		klog.Errorf("Failed to clean up node %s gateway: (%v)", nodeName, err)
+		return err
 	}
 
 	if err := oc.joinSwIPManager.ReleaseJoinLRPIPs(nodeName); err != nil {
-		klog.Errorf("Failed to clean up GR LRP IPs for node %s: %v", nodeName, err)
+		return err
 	}
 
 	if err := libovsdbops.DeleteNodeChassis(oc.sbClient, nodeName); err != nil {
-		klog.Errorf("Failed to remove the chassis associated with node %s in the OVN SB Chassis table: %v", nodeName, err)
+		return err
 	}
+	return nil
 }
 
 // OVN uses an overlay and doesn't need GCE Routes, we need to
@@ -1481,7 +1486,10 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 			continue
 		}
 
-		oc.deleteNode(nodeSwitch.Name, subnets)
+		if err := oc.deleteNode(nodeSwitch.Name, subnets); err != nil {
+			klog.Warningf("Failed to delete node:%s, err:%v", nodeSwitch.Name, err)
+			return err
+		}
 		//remove the node from the chassis map so we don't delete it twice
 		staleChassis.Delete(nodeSwitch.Name)
 	}
@@ -1490,4 +1498,221 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 		return fmt.Errorf("failed deleting chassis %v error: %v", staleChassis.List(), err)
 	}
 	return nil
+}
+
+func (oc *Controller) addNodeObj(node *kapi.Node) error {
+	var errs []error
+
+	if noHostSubnet := noHostSubnet(node); noHostSubnet {
+		err := oc.lsManager.AddNoHostSubnetNode(node.Name)
+		if err != nil {
+			return err
+		}
+	}
+
+	klog.Infof("Adding Node %q", node.Name)
+	hostSubnets, err := oc.addNode(node)
+	if err != nil {
+		klog.Errorf("NodeAdd: error creating subnet for node %s: %v", node.Name, err)
+		oc.addNodeFailed.Store(node.Name, true)
+		oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+		oc.mgmtPortFailed.Store(node.Name, true)
+		oc.gatewaysFailed.Store(node.Name, true)
+		return err
+	}
+
+	if err = oc.syncNodeClusterRouterPort(node, hostSubnets); err != nil {
+		if !util.IsAnnotationNotSetError(err) {
+			errs = append(errs, err)
+		}
+		oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+	}
+
+	err = oc.syncNodeManagementPort(node, hostSubnets)
+	if err != nil {
+		if !util.IsAnnotationNotSetError(err) {
+			errs = append(errs, err)
+		}
+		oc.mgmtPortFailed.Store(node.Name, true)
+	}
+
+	if err := oc.syncNodeGateway(node, hostSubnets); err != nil {
+		if !util.IsAnnotationNotSetError(err) {
+			errs = append(errs, err)
+		}
+		oc.gatewaysFailed.Store(node.Name, true)
+	}
+
+	// ensure pods that already exist on this node have their logical ports created
+	options := metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", node.Name).String()}
+	pods, err := oc.client.CoreV1().Pods(metav1.NamespaceAll).List(context.TODO(), options)
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		oc.addRetryPods(pods.Items)
+		oc.requestRetryPods()
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return kerrors.NewAggregate(errs)
+}
+
+func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
+	var errs []error
+
+	shouldUpdate, err := shouldUpdate(node, oldNode)
+	if err != nil {
+		return err
+	}
+	if !shouldUpdate {
+		// the hostsubnet is not assigned by ovn-kubernetes
+		return err
+	}
+
+	var hostSubnets []*net.IPNet
+	_, failed := oc.addNodeFailed.Load(node.Name)
+	if failed {
+		hostSubnets, err = oc.addNode(node)
+		if err != nil {
+			return err
+		}
+		oc.addNodeFailed.Delete(node.Name)
+	}
+
+	_, failed = oc.nodeClusterRouterPortFailed.Load(node.Name)
+	if failed || nodeChassisChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) {
+		if err = oc.syncNodeClusterRouterPort(node, nil); err != nil {
+			if !util.IsAnnotationNotSetError(err) {
+				errs = append(errs, err)
+			}
+			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+		} else {
+			oc.nodeClusterRouterPortFailed.Delete(node.Name)
+		}
+	}
+
+	_, failed = oc.mgmtPortFailed.Load(node.Name)
+	if failed || macAddressChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) {
+		err := oc.syncNodeManagementPort(node, hostSubnets)
+		if err != nil {
+			if !util.IsAnnotationNotSetError(err) {
+				errs = append(errs, err)
+			}
+			oc.mgmtPortFailed.Store(node.Name, true)
+		} else {
+			oc.mgmtPortFailed.Delete(node.Name)
+		}
+	}
+
+	if nodeChassisChanged(oldNode, node) {
+		// delete stale chassis in SBDB if any
+		oc.deleteStaleNodeChassis(node)
+	}
+
+	oc.clearInitialNodeNetworkUnavailableCondition(oldNode, node)
+
+	_, failed = oc.gatewaysFailed.Load(node.Name)
+	if failed || gatewayChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) || hostAddressesChanged(oldNode, node) {
+		err := oc.syncNodeGateway(node, nil)
+		if err != nil {
+			if !util.IsAnnotationNotSetError(err) {
+				errs = append(errs, err)
+			}
+			oc.gatewaysFailed.Store(node.Name, true)
+		} else {
+			oc.gatewaysFailed.Delete(node.Name)
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return kerrors.NewAggregate(errs)
+}
+
+func (oc *Controller) deleteNodeObj(node *kapi.Node) error {
+	klog.V(5).Infof("Deleting Node %q. Removing the node from "+
+		"various caches", node.Name)
+
+	nodeSubnets, _ := util.ParseNodeHostSubnetAnnotation(node)
+	if err := oc.deleteNode(node.Name, nodeSubnets); err != nil {
+		return err
+	}
+	oc.lsManager.DeleteNode(node.Name)
+	oc.addNodeFailed.Delete(node.Name)
+	oc.mgmtPortFailed.Delete(node.Name)
+	oc.gatewaysFailed.Delete(node.Name)
+	oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	return nil
+}
+
+// iterateRetryNodes checks if any outstanding Nodes exists
+// then tries to re-add them if so
+// updateAll forces all nodes to be attempted to be retried regardless
+func (oc *Controller) iterateRetryNodes(updateAll bool) {
+	oc.retryNodes.retryMutex.Lock()
+	defer oc.retryNodes.retryMutex.Unlock()
+	now := time.Now()
+	for nodeName, entry := range oc.retryNodes.entries {
+		if entry.ignore {
+			// neither addition nor deletion is being retried
+			continue
+		}
+		var node *kapi.Node
+		// check if we need to create
+		if entry.newObj != nil {
+			n := entry.newObj.(*kapi.Node)
+			kNode, err := oc.watchFactory.GetNode(n.Name)
+			if err != nil && errors.IsNotFound(err) {
+				klog.Infof("%s node not found in the informers cache, not going to retry node setup", nodeName)
+				entry.newObj = nil
+			} else {
+				node = kNode
+			}
+		}
+
+		entry.backoffSec = entry.backoffSec * 2
+		if entry.backoffSec > 60 {
+			entry.backoffSec = 60
+		}
+		backoff := (entry.backoffSec * time.Second) + (time.Duration(rand.Intn(500)) * time.Millisecond)
+		nTimer := entry.timeStamp.Add(backoff)
+		if updateAll || now.After(nTimer) {
+			klog.Infof("Node Retry: %s retry node setup", nodeName)
+
+			// check if we need to delete
+			if entry.oldObj != nil {
+				klog.Infof("Node Retry: Removing old Node for %s", nodeName)
+				node, ok := entry.oldObj.(*kapi.Node)
+				if ok {
+					if err := oc.deleteNodeObj(node); err != nil {
+						klog.Infof("Node Retry delete failed for %s, will try again later: %v",
+							nodeName, err)
+						entry.timeStamp = time.Now()
+						continue
+					}
+					// successfully cleaned up old node, remove it from the retry cache
+					entry.oldObj = nil
+				}
+			}
+
+			// create new node if needed
+			if node != nil {
+				klog.Infof("Node Retry: Creating new node for %s", nodeName)
+				if err := oc.addNodeObj(node); err != nil {
+					klog.Infof("Node Retry create failed for %s, will try again later: %v",
+						nodeName, err)
+					entry.timeStamp = time.Now()
+					continue
+				}
+				// successfully create node, remove it from the retry cache
+				entry.newObj = nil
+			}
+
+			klog.Infof("Node Retry successful for %s", nodeName)
+			oc.retryNodes.checkAndDeleteRetryObj(nodeName, false)
+		} else {
+			klog.V(5).Infof("%s retry node not after timer yet, time: %s", nodeName, nTimer)
+		}
+	}
 }
