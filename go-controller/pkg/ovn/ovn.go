@@ -139,11 +139,11 @@ type Controller struct {
 	addressSetFactory addressset.AddressSetFactory
 
 	// For each logical port, the number of network policies that want
-	// to add a ingress deny rule.
+	// to add an ingress deny rule.
 	lspIngressDenyCache map[string]int
 
 	// For each logical port, the number of network policies that want
-	// to add a egress deny rule.
+	// to add an egress deny rule.
 	lspEgressDenyCache map[string]int
 
 	// A mutex for lspIngressDenyCache and lspEgressDenyCache
