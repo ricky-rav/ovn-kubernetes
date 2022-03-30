@@ -3,7 +3,6 @@ package ovn
 import (
 	"fmt"
 	"math/rand"
-	"net"
 	"time"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -82,6 +81,7 @@ func (oc *Controller) iterateRetryPods(updateAll bool) {
 }
 
 // checkAndDeleteRetryPod deletes a specific entry from the map, if it existed, returns true
+// corresponds to deleteRetryObj(key, true)
 func (oc *Controller) checkAndDeleteRetryPod(pod *kapi.Pod) bool {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
@@ -95,6 +95,7 @@ func (oc *Controller) checkAndDeleteRetryPod(pod *kapi.Pod) bool {
 
 // checkAndSkipRetryPod sets a specific entry from the map to be ignored for subsequent retries
 // if it existed, returns true
+// Corresponds to skipRetryObj
 func (oc *Controller) checkAndSkipRetryPod(pod *kapi.Pod) bool {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
@@ -107,6 +108,7 @@ func (oc *Controller) checkAndSkipRetryPod(pod *kapi.Pod) bool {
 }
 
 // unSkipRetryPod ensures a pod is no longer ignored for retry loop
+// corresponds to unSkipRetryObj
 func (oc *Controller) unSkipRetryPod(pod *kapi.Pod) {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
@@ -118,6 +120,7 @@ func (oc *Controller) unSkipRetryPod(pod *kapi.Pod) {
 
 // initRetryAddPod tracks a pod that failed to be created to potentially retry later (needsAdd = true)
 // initially it is marked as skipped for retry loop (ignore = true)
+// corresponds to initRetryObjWithAdd
 func (oc *Controller) initRetryAddPod(pod *kapi.Pod) {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
@@ -136,21 +139,9 @@ func (oc *Controller) initRetryAddPod(pod *kapi.Pod) {
 func (oc *Controller) initRetryDelPod(pod *kapi.Pod) {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
-	key := getPodNamespacedName(pod)
-	var portInfo *lpInfo
-	if !util.PodWantsNetwork(pod) {
-		// create dummy logicalPortInfo for host-networked pods
-		mac, _ := net.ParseMAC("00:00:00:00:00:00")
-		portInfo = &lpInfo{
-			logicalSwitch: "host-networked",
-			name:          getPodNamespacedName(pod),
-			uuid:          "host-networked",
-			ips:           []*net.IPNet{},
-			mac:           mac,
-		}
-	} else {
-		portInfo, _ = oc.logicalPortCache.get(key)
-	}
+	key := getPodNamespacedName(pod) // here the separator is the UNDERSCORE
+
+	portInfo := oc.getPortInfo(pod)
 	if entry, ok := oc.retryPods[key]; ok {
 		entry.timeStamp = time.Now()
 		entry.needsDel = portInfo
@@ -164,7 +155,7 @@ func (oc *Controller) removeAddRetry(pod *kapi.Pod) {
 	defer oc.retryPodsLock.Unlock()
 	key := getPodNamespacedName(pod)
 	if entry, ok := oc.retryPods[key]; ok {
-		entry.needsAdd = false
+		entry.needsAdd = false // equivalent to setting newObj to nil
 	}
 }
 
@@ -173,10 +164,11 @@ func (oc *Controller) removeDeleteRetry(pod *kapi.Pod) {
 	defer oc.retryPodsLock.Unlock()
 	key := getPodNamespacedName(pod)
 	if entry, ok := oc.retryPods[key]; ok {
-		entry.needsDel = nil
+		entry.needsDel = nil // equivalent to setting oldObj to nil
 	}
 }
 
+// equivalent to getObjRetryEntry
 func (oc *Controller) getPodRetryEntry(pod *kapi.Pod) *retryEntry {
 	oc.retryPodsLock.Lock()
 	defer oc.retryPodsLock.Unlock()
@@ -188,6 +180,8 @@ func (oc *Controller) getPodRetryEntry(pod *kapi.Pod) *retryEntry {
 	return nil
 }
 
+
+// It is the equivalent of iterating on a list of pods and calling initRetryObjWithAdd 
 // addRetryPods adds multiple pods to be retried later for their add events
 func (oc *Controller) addRetryPods(pods []kapi.Pod) {
 	oc.retryPodsLock.Lock()
@@ -204,6 +198,7 @@ func (oc *Controller) addRetryPods(pods []kapi.Pod) {
 	}
 }
 
+// equivalent to requestRetryObjs
 func (oc *Controller) requestRetryPods() {
 	select {
 	case oc.retryPodsChan <- struct{}{}:
