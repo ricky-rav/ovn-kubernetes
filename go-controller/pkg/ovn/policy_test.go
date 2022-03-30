@@ -1425,10 +1425,8 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 				// Create a second NP
 				ginkgo.By("Creating and deleting another policy that references that pod")
-
 				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).Create(context.TODO(), networkPolicy2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
 				// sleep long enough for TransactWithRetry to fail, causing NP Add to fail
 				time.Sleep(types.OVSDBTimeout + time.Second)
 				// check to see if the retry cache has an entry for this policy
