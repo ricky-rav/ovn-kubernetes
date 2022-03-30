@@ -3,13 +3,14 @@ package ovn
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/fields"
 	"math/rand"
 	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"k8s.io/apimachinery/pkg/fields"
 
 	kapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -712,6 +713,9 @@ func (oc *Controller) syncGatewayLogicalNetwork(node *kapi.Node, l3GatewayConfig
 // Otherwise, ovn-controller will flood-fill unrelated datapaths unnecessarily, causing scale
 // problems.
 func (oc *Controller) syncNodeClusterRouterPort(node *kapi.Node, hostSubnets []*net.IPNet) error {
+	klog.Infof("syncNodeClusterRouterPort node=%s started", node.Name)
+	defer klog.Infof("syncNodeClusterRouterPort node=%s ended", node.Name)
+
 	chassisID, err := util.ParseNodeChassisIDAnnotation(node)
 	if err != nil {
 		return err
@@ -1119,6 +1123,9 @@ func (oc *Controller) allocateNodeSubnets(node *kapi.Node) ([]*net.IPNet, []*net
 }
 
 func (oc *Controller) addNode(node *kapi.Node) ([]*net.IPNet, error) {
+	klog.Infof("addNode started on node=%s", node.Name)
+	defer klog.Infof("addNode ended on node=%s", node.Name)
+
 	oc.clearInitialNodeNetworkUnavailableCondition(node)
 	hostSubnets, allocatedSubnets, err := oc.allocateNodeSubnets(node)
 	if err != nil {
@@ -1257,6 +1264,9 @@ func (oc *Controller) deleteNodeLogicalNetwork(nodeName string) error {
 }
 
 func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) error {
+	klog.Errorf("deleteNode called on %s", nodeName)
+	defer klog.Errorf("deleteNode ended on %s", nodeName)
+
 	// Clean up as much as we can but don't hard error
 	for _, hostSubnet := range hostSubnets {
 		if err := oc.deleteNodeHostSubnet(nodeName, hostSubnet); err != nil {
@@ -1402,6 +1412,7 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 // This function implements the main body of work of what is described by syncNodes.
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
+	klog.Infof("syncNodesRetriable started")
 	foundNodes := sets.NewString()
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
