@@ -445,7 +445,7 @@ func (oc *Controller) ensureNamespaceLocked(ns string, readOnly bool, namespace 
 		oc.namespaces[ns] = nsInfo
 	} else {
 		nsInfoExisted = true
-		// if we found and existing nsInfo, do not hold the namespaces lock
+		// if we found an existing nsInfo, do not hold the namespaces lock
 		// while waiting for nsInfo to Lock
 		oc.namespacesMutex.Unlock()
 	}

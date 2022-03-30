@@ -65,7 +65,7 @@ type networkPolicy struct {
 	svcHandlerList  []*factory.Handler
 	nsHandlerList   []*factory.Handler
 
-	// localPods is a list of pods affected by ths policy
+	// localPods is a list of pods affected by this policy
 	// this is a sync map so we can handle multiple pods at once
 	// map of string -> *lpInfo
 	localPods sync.Map
@@ -555,6 +555,28 @@ func podDeleteAllowMulticastPolicy(nbClient libovsdbclient.Client, ns string, po
 	return libovsdbops.DeletePortsFromPortGroup(nbClient, hashedPortGroup(ns), portUUID)
 }
 
+func isEgressOnlyPolicy(policy *knet.NetworkPolicy) bool {
+	// This matches [Egress] policy type
+	return len(policy.Spec.PolicyTypes) == 1 && policy.Spec.PolicyTypes[0] == knet.PolicyTypeEgress
+}
+
+func isIngressEgressPolicy(policy *knet.NetworkPolicy) bool {
+	// This matches [Ingress,Egress] policy type
+	return len(policy.Spec.PolicyTypes) == 2
+}
+
+func isIngressOrIngressEgressPolicy(policy *knet.NetworkPolicy) bool {
+	// This matches [Ingress] and [Ingress,Egress] policy types
+	return !isEgressOnlyPolicy(policy)
+}
+
+func isEgressOrIngressEgressPolicy(policy *knet.NetworkPolicy) bool {
+	// This matches [Egress] and [Ingress,Egress] policy types
+	// QUESTION: isn't this equivalent to isEgressOnlyPolicy || isIngressEgressPolicy
+	// or are we capturing a particular corner case?
+	return len(policy.Spec.Egress) > 0
+}
+
 // localPodAddDefaultDeny ensures ports (i.e. pods) are in the correct
 // default-deny portgroups. Whether or not pods are in default-deny depends
 // on whether or not any policies select this pod, so there is a reference
@@ -563,22 +585,19 @@ func (oc *Controller) localPodAddDefaultDeny(policy *knet.NetworkPolicy,
 	ports ...*lpInfo) (ingressDenyPorts, egressDenyPorts []string) {
 	oc.lspMutex.Lock()
 
+	// ***** TODO my new comments are wrong!!!!******
 	// Default deny rule.
-	// 1. Any pod that matches a network policy should get a default
-	// ingress deny rule.  This is irrespective of whether there
-	// is a ingress section in the network policy. But, if
-	// PolicyTypes in the policy has only "egress" in it, then
-	// it is a 'egress' only network policy and we should not
-	// add any default deny rule for ingress.
-	// 2. If there is any "egress" section in the policy or
-	// the PolicyTypes has 'egress' in it, we add a default
-	// egress deny rule.
-
+	// 1. Any pod that matches a network policy affecting ingress traffic
+	// should get a default ingress deny rule. This is for network policies
+	// of type Ingress and Ingress,Egress.
+	// 2. Any pod that matches a network policy affecting *only* egress traffic
+	// should get a default egress deny rule. This is for network policies
+	// of type Egress.
 	ingressDenyPorts = []string{}
 	egressDenyPorts = []string{}
 
-	// Handle condition 1 above.
-	if !(len(policy.Spec.PolicyTypes) == 1 && policy.Spec.PolicyTypes[0] == knet.PolicyTypeEgress) {
+	// Handle condition 1 above: policy affects Ingress or Ingress+Egress
+	if isIngressOrIngressEgressPolicy(policy) {
 		for _, portInfo := range ports {
 			// if this is the first NP referencing this pod, then we
 			// need to add it to the port group.
@@ -591,9 +610,10 @@ func (oc *Controller) localPodAddDefaultDeny(policy *knet.NetworkPolicy,
 		}
 	}
 
-	// Handle condition 2 above.
-	if (len(policy.Spec.PolicyTypes) == 1 && policy.Spec.PolicyTypes[0] == knet.PolicyTypeEgress) ||
-		len(policy.Spec.Egress) > 0 || len(policy.Spec.PolicyTypes) == 2 {
+	// Handle condition 2 above: policy has an Egress section
+	// egress only OR Egress,Ingress
+	// QUESTION: can't we get away with just isEgressOrIngressEgressPolicy?
+	if isEgressOnlyPolicy(policy) || isEgressOrIngressEgressPolicy(policy) || isIngressEgressPolicy(policy) {
 		for _, portInfo := range ports {
 			if oc.lspEgressDenyCache[portInfo.name] == 0 {
 				// again, reference count is 0, so add to port
@@ -618,9 +638,9 @@ func (oc *Controller) localPodDelDefaultDeny(
 	ingressDenyPorts = []string{}
 	egressDenyPorts = []string{}
 
-	// Remove port from ingress deny port-group for [Ingress] and [ingress,egress] PolicyTypes
-	// If NOT [egress] PolicyType
-	if !(len(np.policy.Spec.PolicyTypes) == 1 && np.policy.Spec.PolicyTypes[0] == knet.PolicyTypeEgress) {
+	// Remove port from ingress deny port-group if the policy affects Ingress.
+	// If [Ingress] or [Ingress,Egress] PolicyType
+	if isIngressOrIngressEgressPolicy(np.policy) {
 		for _, portInfo := range ports {
 			if oc.lspIngressDenyCache[portInfo.name] > 0 {
 				oc.lspIngressDenyCache[portInfo.name]--
@@ -632,10 +652,9 @@ func (oc *Controller) localPodDelDefaultDeny(
 		}
 	}
 
-	// Remove port from egress deny port group for [egress] and [ingress,egress] PolicyTypes
+	// Remove port from egress deny port group if the policy affects Egress.
 	// if [egress] PolicyType OR there are any egress rules OR [ingress,egress] PolicyType
-	if (len(np.policy.Spec.PolicyTypes) == 1 && np.policy.Spec.PolicyTypes[0] == knet.PolicyTypeEgress) ||
-		len(np.egressPolicies) > 0 || len(np.policy.Spec.PolicyTypes) == 2 {
+	if isEgressOnlyPolicy(np.policy) || len(np.egressPolicies) > 0 || isIngressEgressPolicy(np.policy) {
 		for _, portInfo := range ports {
 			if oc.lspEgressDenyCache[portInfo.name] > 0 {
 				oc.lspEgressDenyCache[portInfo.name]--
@@ -687,24 +706,28 @@ func (oc *Controller) processLocalPodSelectorSetPods(policy *knet.NetworkPolicy,
 			// Retry if getting pod LSP from the cache fails
 			portInfo, err = oc.logicalPortCache.get(logicalPort)
 			if err != nil {
-				klog.Warningf("Failed to get LSP for pod %s/%s for networkPolicy %s refetching err: %v", pod.Namespace, pod.Name, policy.Name, err)
+				klog.Warningf("Failed to get LSP for pod %s/%s for networkPolicy %s refetching err: %v",
+					pod.Namespace, pod.Name, policy.Name, err)
 				return false, nil
 			}
 
 			// Retry if LSP is scheduled for deletion
 			if !portInfo.expires.IsZero() {
-				klog.Warningf("Stale LSP %s for network policy %s found in cache refetching", portInfo.name, policy.Name)
+				klog.Warningf("Stale LSP %s for network policy %s found in cache refetching",
+					portInfo.name, policy.Name)
 				return false, nil
 			}
 
 			// LSP get succeeded and LSP is up to fresh, exit and continue
-			klog.V(5).Infof("Fresh LSP %s for network policy %s found in cache", portInfo.name, policy.Name)
+			klog.V(5).Infof("Fresh LSP %s for network policy %s found in cache",
+				portInfo.name, policy.Name)
 			return true, nil
 
 		})
 		if retryErr != nil {
 			// Failed to get an up to date version of the LSP from the cache
-			klog.Warning("Failed to get LSP after multiple retries for pod %s/%s for networkPolicy %s err: %v", pod.Namespace, pod.Name, policy.Name, retryErr)
+			klog.Warning("Failed to get LSP after multiple retries for pod %s/%s for networkPolicy %s err: %v",
+				pod.Namespace, pod.Name, policy.Name, retryErr)
 			return
 		}
 
@@ -847,6 +870,7 @@ func (oc *Controller) handleLocalPodSelectorDelFunc(policy *knet.NetworkPolicy, 
 	}
 }
 
+// QUESTION: what's this for?
 func (oc *Controller) handleLocalPodSelector(
 	policy *knet.NetworkPolicy, np *networkPolicy, portGroupIngressDenyName, portGroupEgressDenyName string,
 	handleInitialItems func([]interface{})) {
@@ -1285,6 +1309,7 @@ func (oc *Controller) handlePeerServiceAdd(gp *gressPolicy, obj interface{}) {
 	service := obj.(*kapi.Service)
 	klog.V(5).Infof("A Service: %s matches the namespace as the gress policy: %s", service.Name, gp.policyName)
 	if err := gp.addPeerSvcVip(oc.nbClient, service); err != nil {
+		// TODO if it fails, the action is NEVER retried... you should return an error and handle it in the watcher
 		klog.Errorf(err.Error())
 	}
 }
@@ -1371,6 +1396,8 @@ func (oc *Controller) handlePeerNamespaceAndPodSelector(
 
 	namespaceHandler := oc.watchFactory.AddFilteredNamespaceHandler("", nsSel,
 		cache.ResourceEventHandlerFuncs{
+			// When a namespace is added, create a "filtered" pod handler (with add/delete/update funcs)
+			// based on the podSelector of this network policy
 			AddFunc: func(obj interface{}) {
 				namespace := obj.(*kapi.Namespace)
 				np.RLock()
@@ -1391,7 +1418,7 @@ func (oc *Controller) handlePeerNamespaceAndPodSelector(
 							oc.handlePeerPodSelectorDelete(gp, obj)
 						},
 						UpdateFunc: func(oldObj, newObj interface{}) {
-							oc.handlePeerPodSelectorAddUpdate(gp, newObj)
+							oc.handlePeerPodSelectorAddUpdate(gp, newObj) // QUESTION: nothing for oldObj?
 						},
 					}, func(objs []interface{}) {
 						oc.handlePeerPodSelectorAddUpdate(gp, objs...)
@@ -1416,7 +1443,8 @@ func (oc *Controller) handlePeerNamespaceAndPodSelector(
 
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
-			},
+			}, // nothing at all? is this because an update on the network policy will
+			//   trigger a delete (which will delete everything) and then an add?
 		}, nil)
 	np.nsHandlerList = append(np.nsHandlerList, namespaceHandler)
 }
@@ -1463,6 +1491,9 @@ func (oc *Controller) handlePeerNamespaceSelector(
 			DeleteFunc: func(obj interface{}) {
 				namespace := obj.(*kapi.Namespace)
 				// Update the ACL ...
+				// When a delete comes in, remove namespace address set from the *gress policy
+				// in cache (done in gress.delNamespaceAddressSet()),
+				// and then update ACLS (???? why not delete them???)
 				oc.handlePeerNamespaceSelectorOnUpdate(np, gress, func() bool {
 					// ... on condition that the removed address set was in the 'gress policy
 					return gress.delNamespaceAddressSet(namespace.Name)
