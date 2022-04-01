@@ -3,7 +3,6 @@ package ovn
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/fields"
 	"math/rand"
 	"net"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"k8s.io/apimachinery/pkg/fields"
 
 	kapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -713,6 +714,9 @@ func (oc *Controller) syncGatewayLogicalNetwork(node *kapi.Node, l3GatewayConfig
 // Otherwise, ovn-controller will flood-fill unrelated datapaths unnecessarily, causing scale
 // problems.
 func (oc *Controller) syncNodeClusterRouterPort(node *kapi.Node, hostSubnets []*net.IPNet) error {
+	klog.Infof("syncNodeClusterRouterPort node=%s started", node.Name)
+	defer klog.Infof("syncNodeClusterRouterPort node=%s ended", node.Name)
+
 	chassisID, err := util.ParseNodeChassisIDAnnotation(node)
 	if err != nil {
 		return err
@@ -1120,6 +1124,9 @@ func (oc *Controller) allocateNodeSubnets(node *kapi.Node) ([]*net.IPNet, []*net
 }
 
 func (oc *Controller) addNode(node *kapi.Node) ([]*net.IPNet, error) {
+	klog.Infof("addNode started on node=%s", node.Name)
+	defer klog.Infof("addNode ended on node=%s", node.Name)
+
 	oc.clearInitialNodeNetworkUnavailableCondition(node, nil)
 	hostSubnets, allocatedSubnets, err := oc.allocateNodeSubnets(node)
 	if err != nil {
@@ -1258,6 +1265,9 @@ func (oc *Controller) deleteNodeLogicalNetwork(nodeName string) error {
 }
 
 func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) error {
+	klog.Errorf("deleteNode called on %s", nodeName)
+	defer klog.Errorf("deleteNode ended on %s", nodeName)
+
 	// Clean up as much as we can but don't hard error
 	for _, hostSubnet := range hostSubnets {
 		if err := oc.deleteNodeHostSubnet(nodeName, hostSubnet); err != nil {
@@ -1407,6 +1417,7 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 // This function implements the main body of work of what is described by syncNodes.
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
+	klog.Infof("syncNodesRetriable started")
 	foundNodes := sets.NewString()
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
@@ -1559,30 +1570,41 @@ func (oc *Controller) addNodeObj(node *kapi.Node) error {
 }
 
 func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
+	klog.Infof("updateNodeObj start with old=%s, new=%s", oldNode.Name, node.Name)
+	defer klog.Infof("updateNodeObj end with old=%s, new=%s", oldNode.Name, node.Name)
+
 	var errs []error
 
 	shouldUpdate, err := shouldUpdate(node, oldNode)
-	if err != nil {
-		return err
-	}
-	if !shouldUpdate {
-		// the hostsubnet is not assigned by ovn-kubernetes
+	klog.Infof("updateNodeObj old=%s, new=%s, shouldUpdate=%v", oldNode.Name, node.Name, shouldUpdate)
+
+	if !shouldUpdate || err != nil {
+		// if !shouldUpdate, the hostsubnet is not assigned by ovn-kubernetes
 		return err
 	}
 
 	var hostSubnets []*net.IPNet
 	_, failed := oc.addNodeFailed.Load(node.Name)
+	klog.Infof("updateNodeObj old=%s, new=%s, has entry in addNodeFailed: %v",
+		oldNode.Name, node.Name, failed)
+
 	if failed {
 		hostSubnets, err = oc.addNode(node)
 		if err != nil {
+			klog.Infof("updateNodeObj old=%s, new=%s, addNode failed: %v",
+				oldNode.Name, node.Name, err)
 			return err
 		}
 		oc.addNodeFailed.Delete(node.Name)
 	}
 
 	_, failed = oc.nodeClusterRouterPortFailed.Load(node.Name)
+	klog.Infof("updateNodeObj old=%s, new=%s, has entry in nodeClusterRouterPortFailed: %v",
+		oldNode.Name, node.Name, failed)
 	if failed || nodeChassisChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) {
 		if err = oc.syncNodeClusterRouterPort(node, nil); err != nil {
+			klog.Infof("updateNodeObj old=%s, new=%s, syncNodeClusterRouterPort failed: %v",
+				oldNode.Name, node.Name, err)
 			if !util.IsAnnotationNotSetError(err) {
 				errs = append(errs, err)
 			}
@@ -1593,9 +1615,16 @@ func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
 	}
 
 	_, failed = oc.mgmtPortFailed.Load(node.Name)
+	klog.Infof("updateNodeObj old=%s, new=%s, has entry in mgmtPortFailed: %v",
+		oldNode.Name, node.Name, failed)
+
 	if failed || macAddressChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) {
+		klog.Infof("updateNodeObj old=%s, new=%s, has entry in mgmtPortFailed or macAddressChanged or nodeSubnetChanged",
+			oldNode.Name, node.Name)
 		err := oc.syncNodeManagementPort(node, hostSubnets)
 		if err != nil {
+			klog.Infof("updateNodeObj old=%s, new=%s, syncNodeManagementPort failed: %v",
+				oldNode.Name, node.Name, err)
 			if !util.IsAnnotationNotSetError(err) {
 				errs = append(errs, err)
 			}
@@ -1606,6 +1635,8 @@ func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
 	}
 
 	if nodeChassisChanged(oldNode, node) {
+		klog.Infof("updateNodeObj old=%s, new=%s, nodeChassisChanged, calling deleteStaleNodeChassis",
+			oldNode.Name, node.Name)
 		// delete stale chassis in SBDB if any
 		oc.deleteStaleNodeChassis(node)
 	}
@@ -1613,9 +1644,17 @@ func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
 	oc.clearInitialNodeNetworkUnavailableCondition(oldNode, node)
 
 	_, failed = oc.gatewaysFailed.Load(node.Name)
+	klog.Infof("updateNodeObj old=%s, new=%s, has entry in gatewaysFailed: %v",
+		oldNode.Name, node.Name, failed)
+
 	if failed || gatewayChanged(oldNode, node) || nodeSubnetChanged(oldNode, node) || hostAddressesChanged(oldNode, node) {
+		klog.Infof("updateNodeObj old=%s, new=%s, has entry in gatewaysFailed or nodeSubnetChanged or hostAddressesChanged",
+			oldNode.Name, node.Name)
+
 		err := oc.syncNodeGateway(node, nil)
 		if err != nil {
+			klog.Infof("updateNodeObj old=%s, new=%s, syncNodeGateway failed: %v",
+				oldNode.Name, node.Name, err)
 			if !util.IsAnnotationNotSetError(err) {
 				errs = append(errs, err)
 			}
@@ -1631,8 +1670,7 @@ func (oc *Controller) updateNodeObj(node, oldNode *kapi.Node) error {
 }
 
 func (oc *Controller) deleteNodeObj(node *kapi.Node) error {
-	klog.V(5).Infof("Deleting Node %q. Removing the node from "+
-		"various caches", node.Name)
+	klog.V(5).Infof("Deleting Node %q. Removing the node from various caches", node.Name)
 
 	nodeSubnets, _ := util.ParseNodeHostSubnetAnnotation(node)
 	if err := oc.deleteNode(node.Name, nodeSubnets); err != nil {

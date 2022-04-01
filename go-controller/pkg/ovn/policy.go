@@ -591,10 +591,10 @@ func (oc *Controller) localPodAddDefaultDeny(policy *knet.NetworkPolicy,
 	// Default deny rule.
 	// 1. Any pod that matches a network policy affecting ingress traffic
 	// should get a default ingress deny rule. This is for network policies
-	// of type Ingress and Ingress,Egress.
-	// 2. Any pod that matches a network policy affecting *only* egress traffic
+	// of PolicyType [Ingress] and [Ingress,Egress]
+	// 2. Any pod that matches a network policy affecting egress traffic
 	// should get a default egress deny rule. This is for network policies
-	// of type Egress.
+	// of PolicyType [Egress] and [Ingress,Egress]
 	ingressDenyPorts = []string{}
 	egressDenyPorts = []string{}
 
@@ -1172,8 +1172,8 @@ func (oc *Controller) buildNetworkPolicyACLs(np *networkPolicy, aclLogging strin
 // deleteNetworkPolicy removes a network policy
 // If np is provided, then deletion may still occur without a lock on nsInfo
 func (oc *Controller) deleteNetworkPolicy(policy *knet.NetworkPolicy, np *networkPolicy) error {
-	klog.Infof("Deleting network policy %s in namespace %s",
-		policy.Name, policy.Namespace)
+	klog.Infof("Deleting network policy %s in namespace %s, np is nil: %v",
+		policy.Name, policy.Namespace, np == nil)
 
 	nsInfo, nsUnlock := oc.getNamespaceLocked(policy.Namespace, false)
 	if nsInfo == nil {
@@ -1208,6 +1208,7 @@ func (oc *Controller) deleteNetworkPolicy(policy *knet.NetworkPolicy, np *networ
 // if nsInfo is provided, the entire port group will be deleted for ingress/egress directions
 // lastPolicy indicates if no other policies are using the respective portgroup anymore
 func (oc *Controller) destroyNetworkPolicy(np *networkPolicy, lastPolicy bool) error {
+	klog.Infof("destroyNetworkPolicy started on %s/%s", np.name, np.namespace)
 	np.Lock()
 	defer np.Unlock()
 	np.deleted = true
@@ -1552,6 +1553,7 @@ func (oc *Controller) shutdownHandlers(np *networkPolicy) {
 // iterateRetryNetworkPolicies checks if any outstanding NetworkPolicies exist
 // then tries to re-add them if so
 // updateAll forces all policies to be attempted to be retried regardless
+// **** NOT IN USE ******
 func (oc *Controller) iterateRetryNetworkPolicies(updateAll bool) {
 	oc.retryNetPolices.retryMutex.Lock()
 	defer oc.retryNetPolices.retryMutex.Unlock()
@@ -1564,11 +1566,12 @@ func (oc *Controller) iterateRetryNetworkPolicies(updateAll bool) {
 		var policyToCreate *knet.NetworkPolicy
 		if npEntry.newObj != nil {
 			p := npEntry.newObj.(*knet.NetworkPolicy)
-			// get the latest version of the new policy from the informer, if it doesn't exist we are not going to
-			// create the new policy
+			// get the latest version of the new policy from the informer;
+			// if it doesn't exist we are not going to create the new policy.
 			np, err := oc.watchFactory.GetNetworkPolicy(p.Namespace, p.Name)
 			if err != nil && kerrors.IsNotFound(err) {
-				klog.Infof("%s policy not found in the informers cache, not going to retry policy create", namespacedName)
+				klog.Infof("%s policy not found in the informers cache,"+
+					" not going to retry policy create", namespacedName)
 				npEntry.newObj = nil
 			} else {
 				policyToCreate = np
