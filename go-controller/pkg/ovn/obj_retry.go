@@ -1,9 +1,19 @@
 package ovn
 
 import (
+	"fmt"
+	"math/rand"
+	"reflect"
+	"strings"
 	"time"
 
+	kapi "k8s.io/api/core/v1"
+	knet "k8s.io/api/networking/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"k8s.io/klog/v2"
+
+	factory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 )
 
 type retryObjEntry struct {
@@ -125,4 +135,448 @@ func (r *retryObjs) getObjRetryEntry(key string) *retryObjEntry {
 		return &x
 	}
 	return nil
+}
+
+func splitNamespacedName(namespacedName string) (string, string) {
+	sep := "/"
+	if strings.Contains(namespacedName, sep) {
+		s := strings.SplitN(namespacedName, sep, 1)
+		if len(s) == 2 {
+			return s[0], s[1]
+		}
+	}
+	return namespacedName, ""
+
+}
+
+func areResourceObjectsEqual(objType reflect.Type, obj1, obj2 interface{}) (bool, error) {
+	var err error
+	// switch based on type
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		// var kNP *knet.NetworkPolicy
+		kNP1, ok := obj1.(*knet.NetworkPolicy)
+		if !ok {
+			return false, fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+		}
+		kNP2, ok := obj2.(*knet.NetworkPolicy)
+		if !ok {
+			return false, fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+		}
+		return reflect.DeepEqual(kNP1, kNP2), nil
+	// case NamespaceType:
+	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+	// 		return &namespace.ObjectMeta, nil
+	// 	}
+	case factory.NodeType:
+		kNode1, ok := obj1.(*kapi.Node)
+		if !ok {
+			return false, fmt.Errorf("could not cast interface{} object to *kapi.Node")
+		}
+		kNode2, ok := obj2.(*kapi.Node)
+		if !ok {
+			return false, fmt.Errorf("could not cast interface{} object to *kapi.Node")
+		}
+		return reflect.DeepEqual(kNode1, kNode2), nil
+	// case EgressFirewallType:
+	// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+	// 		return &egressFirewall.ObjectMeta, nil
+	// 	}
+	// case EgressIPType:
+	// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+	// 		return &egressIP.ObjectMeta, nil
+	// 	}
+	// case CloudPrivateIPConfigType:
+	// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+	// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+	// 	}
+	default:
+		err = fmt.Errorf("object type %v not supported", objType) // default error message
+	}
+	return false, err
+}
+
+func GetResourceObjectKey(objType reflect.Type, obj interface{}) (string, error) {
+	var err error
+	// switch based on type
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		// var kNP *knet.NetworkPolicy
+		kNP, ok := obj.(*knet.NetworkPolicy)
+		if !ok {
+			return "", fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+		}
+		key := getPolicyNamespacedName(kNP)
+		return key, nil
+	// case NamespaceType:
+	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+	// 		return &namespace.ObjectMeta, nil
+	// 	}
+	case factory.NodeType:
+		kNode, ok := obj.(*kapi.Node)
+		if !ok {
+			return "", fmt.Errorf("could not cast interface{} object to *kapi.Node")
+		}
+		return kNode.Name, nil
+	// case EgressFirewallType:
+	// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+	// 		return &egressFirewall.ObjectMeta, nil
+	// 	}
+	// case EgressIPType:
+	// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+	// 		return &egressIP.ObjectMeta, nil
+	// 	}
+	// case CloudPrivateIPConfigType:
+	// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+	// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+	// 	}
+	default:
+		err = fmt.Errorf("object type %v not supported", objType) // default error message
+	}
+	return "", err
+}
+
+func (oc *Controller) GetResourceObjectFromInformerCache(objType reflect.Type, key string) (interface{}, error) {
+	var obj interface{}
+	var err error
+	// switch based on type
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		// var ok bool
+		// var kNP *knet.NetworkPolicy
+		namespace, name := splitNamespacedName(key)
+		obj, err = oc.watchFactory.GetNetworkPolicy(namespace, name)
+		return obj, err
+	// case NamespaceType:
+	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+	// 		return &namespace.ObjectMeta, nil
+	// 	}
+	case factory.NodeType:
+		obj, err = oc.watchFactory.GetNode(key)
+
+	// case EgressFirewallType:
+	// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+	// 		return &egressFirewall.ObjectMeta, nil
+	// 	}
+	// case EgressIPType:
+	// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+	// 		return &egressIP.ObjectMeta, nil
+	// 	}
+	// case CloudPrivateIPConfigType:
+	// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+	// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+	// 	}
+	default:
+		err = fmt.Errorf("object type %v not supported", objType) // default error message
+	}
+	return obj, err
+}
+
+// func (oc *Controller) addNetworkPolicy(policy *knet.NetworkPolicy) error {
+
+func (oc *Controller) addResourceObject(objType reflect.Type, obj interface{}) error {
+	// switch based on type
+	var err error
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		kNP, ok := obj.(*knet.NetworkPolicy)
+		if !ok {
+			return fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+		}
+		if err = oc.addNetworkPolicy(kNP); err != nil {
+			klog.Infof("Network Policy retry delete failed for %s/%s, will try again later: %v",
+				kNP.Namespace, kNP.Name, err)
+			return err
+		}
+		// case NamespaceType:
+		// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+		// 		return &namespace.ObjectMeta, nil
+		// 	}
+	case factory.NodeType:
+		kNode, ok := obj.(*kapi.Node)
+		if !ok {
+			return fmt.Errorf("could not cast interface{} object to *kapi.Node")
+		}
+		if err = oc.addNodeObj(kNode); err != nil {
+			klog.Infof("Node retry delete failed for %s, will try again later: %v",
+				kNode.Name, err)
+			return err
+		}
+		// case EgressFirewallType:
+		// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+		// 		return &egressFirewall.ObjectMeta, nil
+		// 	}
+		// case EgressIPType:
+		// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+		// 		return &egressIP.ObjectMeta, nil
+		// 	}
+		// case CloudPrivateIPConfigType:
+		// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+		// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+		// 	}
+	default:
+		return fmt.Errorf("object type %v not supported", objType) // default error message
+	}
+
+	return nil
+}
+
+// func watchFactory.GetNetworkPolicy(objMeta.Namespace, objMeta.Name)
+// oc.watchFactory.GetPod(pod.Namespace, pod.Name)
+func (oc *Controller) deleteResourceObject(objType reflect.Type, kObj, cachedObj interface{}) error {
+	// switch based on type
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		// var ok bool
+		// var kNP *knet.NetworkPolicy
+		var cachedNP *networkPolicy
+		kNP, ok := kObj.(*knet.NetworkPolicy)
+		if !ok {
+			return fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+		}
+		if cachedObj != nil {
+			if cachedNP, ok = cachedObj.(*networkPolicy); !ok {
+				cachedNP = nil
+			}
+		}
+		if err := oc.deleteNetworkPolicy(kNP, cachedNP); err != nil {
+			klog.Infof("Network Policy retry delete "+
+				"failed for %s/%s, will try again later: %v",
+				kNP.Namespace, kNP.Name, err)
+			return err
+
+		}
+	// case NamespaceType:
+	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+	// 		return &namespace.ObjectMeta, nil
+	// 	}
+	case factory.NodeType:
+		kNode, ok := kObj.(*kapi.Node)
+		if !ok {
+			return fmt.Errorf("could not cast interface{} object to *knet.Node")
+		}
+		if err := oc.deleteNodeObj(kNode); err != nil {
+			klog.Infof("Node retry delete failed for %s, will try again later: %v",
+				kNode.Name, err)
+			return err
+		}
+		// case EgressFirewallType:
+		// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+		// 		return &egressFirewall.ObjectMeta, nil
+		// 	}
+		// case EgressIPType:
+		// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+		// 		return &egressIP.ObjectMeta, nil
+		// 	}
+		// case CloudPrivateIPConfigType:
+		// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+		// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+		// 	}
+	}
+	return nil
+}
+
+// iterateRetryResourceObjects checks if any outstanding resource objects exist
+// and if so it tries to re-add them.
+// updateAll forces all objects to be attempted to be retried regardless.
+func (oc *Controller) iterateRetryResourceObjects(r *retryObjs, updateAll bool) {
+	r.retryMutex.Lock()
+	defer r.retryMutex.Unlock()
+	now := time.Now()
+	for objKey, entry := range r.entries {
+		if entry.ignore {
+			continue
+		}
+		// check if we need to create
+		var objectToCreate interface{}
+		if entry.newObj != nil {
+			// get the latest version of the resource object from the informer;
+			// if it doesn't exist we are not going to create the new object.
+			// objMeta, err := factory.GetObjectMeta(r.oType, entry.newObj) // not in use now
+			// np, err := oc.watchFactory.GetNetworkPolicy(objMeta.Namespace, objMeta.Name)
+			obj, err := oc.GetResourceObjectFromInformerCache(r.oType, objKey)
+			if err != nil && kerrors.IsNotFound(err) {
+				klog.Infof("%s %s not found in the informers cache,"+
+					" not going to retry object create", r.oTypeName, objKey)
+				entry.newObj = nil
+			} else { // TODO what if it's any other error?
+				objectToCreate = obj
+			}
+		}
+
+		entry.backoffSec = entry.backoffSec * 2
+		if entry.backoffSec > 60 {
+			entry.backoffSec = 60
+		}
+		backoff := (entry.backoffSec * time.Second) + (time.Duration(rand.Intn(500)) * time.Millisecond)
+		objTimer := entry.timeStamp.Add(backoff)
+		if updateAll || now.After(objTimer) {
+			klog.Infof("%s retry: %s retry object setup",
+				r.oTypeName, objKey)
+
+			// check if we need to delete anything
+			if entry.oldObj != nil {
+				klog.Infof("%s retry: removing old object for %s",
+					r.oTypeName, objKey)
+				if err := oc.deleteResourceObject(r.oType, entry.oldObj, entry.config); err != nil {
+					klog.Infof("%s retry delete failed for %s, will try again later: %v",
+						r.oTypeName, objKey, err)
+					entry.timeStamp = time.Now()
+					continue
+				}
+				// successfully cleaned up old object, remove it from the retry cache
+				entry.oldObj = nil
+			}
+
+			// create new object if needed
+			if objectToCreate != nil {
+				klog.Infof("%s retry: Creating object for %s",
+					r.oTypeName, objKey)
+				if err := oc.addResourceObject(r.oType, objectToCreate); err != nil {
+					klog.Infof("%s retry create "+
+						"failed for %s, will try again later: %v",
+						r.oTypeName, objKey, err)
+					entry.timeStamp = time.Now()
+					continue
+				}
+				// successfully cleaned up old object, remove it from the retry cache
+				entry.newObj = nil
+			}
+
+			klog.Infof("%s retry successful for %s", r.oTypeName, objKey)
+			oc.retryNetPolices.checkAndDeleteRetryObj(objKey, false)
+		} else {
+			klog.V(5).Infof("%s retry %s not after timer yet, time: %s",
+				r.oTypeName, objKey, objTimer)
+		}
+	}
+}
+
+func (oc *Controller) periodicallyRetryResourceObjects(r *retryObjs) {
+	// track the retryObjs map and every 30 seconds check if any object needs to be retried
+	for {
+		select {
+		case <-time.After(retryObjInterval):
+			oc.iterateRetryResourceObjects(r, false)
+
+		case <-oc.retryNodes.retryChan:
+			oc.iterateRetryResourceObjects(r, true)
+
+		case <-oc.stopChan:
+			return
+		}
+	}
+}
+
+func (oc *Controller) getSyncResourceObjectsFunc(objType reflect.Type) (func([]interface{}), error) {
+	var syncRetriableFunc func([]interface{}) error
+	var syncFunc func([]interface{})
+
+	var name string
+	// switch based on type
+	switch objType {
+	// case PodType:
+	// 	if pod, ok := obj.(*kapi.Pod); ok {
+	// 		return &pod.ObjectMeta, nil
+	// 	}
+	// case ServiceType:
+	// 	if service, ok := obj.(*kapi.Service); ok {
+	// 		return &service.ObjectMeta, nil
+	// 	}
+	// case EndpointsType:
+	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
+	// 		return &endpoints.ObjectMeta, nil
+	// 	}
+	case factory.PolicyType:
+		name = "syncNetworkPolicies"
+		syncRetriableFunc = oc.syncNetworkPoliciesRetriable
+	// case NamespaceType:
+	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
+	// 		return &namespace.ObjectMeta, nil
+	// 	}
+	case factory.NodeType:
+		name = "syncNodes"
+		syncRetriableFunc = oc.syncNodesRetriable
+	// case EgressFirewallType:
+	// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
+	// 		return &egressFirewall.ObjectMeta, nil
+	// 	}
+	// case EgressIPType:
+	// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
+	// 		return &egressIP.ObjectMeta, nil
+	// 	}
+	// case CloudPrivateIPConfigType:
+	// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
+	// 		return &cloudPrivateIPConfig.ObjectMeta, nil
+	// 	}
+	default:
+		return nil, fmt.Errorf("object type %v not supported", objType) // default error message
+	}
+
+	syncFunc = func(objects []interface{}) {
+		klog.Infof("I am a sync func!")
+		oc.syncWithRetry(name, func() error { return syncRetriableFunc(objects) })
+	}
+	return syncFunc, nil
+
 }

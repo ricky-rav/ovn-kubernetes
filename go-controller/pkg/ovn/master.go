@@ -3,7 +3,6 @@ package ovn
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/fields"
 	"math/rand"
 	"net"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"k8s.io/apimachinery/pkg/fields"
 
 	kapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1407,6 +1408,7 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 // This function implements the main body of work of what is described by syncNodes.
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
+	klog.Infof("syncNodesRetriable started")
 	foundNodes := sets.NewString()
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
