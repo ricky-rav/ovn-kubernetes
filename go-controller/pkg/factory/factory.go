@@ -70,16 +70,30 @@ const (
 	defaultNumEventQueues uint32 = 15
 )
 
+// types for dynamic handlers created when adding a network policy
+type peerServiceType struct{}
+type peerNamespaceAndPodSelectorType struct{}
+type peerPodForNamespaceAndPodSelectorType struct{} // created during the add function of peerNamespaceAndPodSelectorType
+type peerNamespaceSelectorType struct{}
+type peerPodSelectorType struct{}
+type localPodSelectorType struct{}
+
 var (
-	PodType                  reflect.Type = reflect.TypeOf(&kapi.Pod{})
-	ServiceType              reflect.Type = reflect.TypeOf(&kapi.Service{})
-	EndpointsType            reflect.Type = reflect.TypeOf(&kapi.Endpoints{})
-	PolicyType               reflect.Type = reflect.TypeOf(&knet.NetworkPolicy{})
-	NamespaceType            reflect.Type = reflect.TypeOf(&kapi.Namespace{})
-	NodeType                 reflect.Type = reflect.TypeOf(&kapi.Node{})
-	EgressFirewallType       reflect.Type = reflect.TypeOf(&egressfirewallapi.EgressFirewall{})
-	EgressIPType             reflect.Type = reflect.TypeOf(&egressipapi.EgressIP{})
-	CloudPrivateIPConfigType reflect.Type = reflect.TypeOf(&ocpcloudnetworkapi.CloudPrivateIPConfig{})
+	PodType                               reflect.Type = reflect.TypeOf(&kapi.Pod{})
+	ServiceType                           reflect.Type = reflect.TypeOf(&kapi.Service{})
+	EndpointsType                         reflect.Type = reflect.TypeOf(&kapi.Endpoints{})
+	PolicyType                            reflect.Type = reflect.TypeOf(&knet.NetworkPolicy{})
+	NamespaceType                         reflect.Type = reflect.TypeOf(&kapi.Namespace{})
+	NodeType                              reflect.Type = reflect.TypeOf(&kapi.Node{})
+	EgressFirewallType                    reflect.Type = reflect.TypeOf(&egressfirewallapi.EgressFirewall{})
+	EgressIPType                          reflect.Type = reflect.TypeOf(&egressipapi.EgressIP{})
+	CloudPrivateIPConfigType              reflect.Type = reflect.TypeOf(&ocpcloudnetworkapi.CloudPrivateIPConfig{})
+	PeerServiceTypeVar                    reflect.Type = reflect.TypeOf(&peerServiceType{})
+	PeerNamespaceAndPodSelectorTypeVar    reflect.Type = reflect.TypeOf(&peerNamespaceAndPodSelectorType{})
+	PeerPodForNamespaceAndPodSelectorType reflect.Type = reflect.TypeOf(&peerPodForNamespaceAndPodSelectorType{})
+	PeerNamespaceSelectorTypeVar          reflect.Type = reflect.TypeOf(&peerNamespaceSelectorType{})
+	PeerPodSelectorTypeVar                reflect.Type = reflect.TypeOf(&peerPodSelectorType{})
+	LocalPodSelectorTypeVar               reflect.Type = reflect.TypeOf(&localPodSelectorType{})
 )
 
 // NewMasterWatchFactory initializes a new watch factory for the master or master+node processes.
@@ -327,46 +341,51 @@ func GetObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 	return nil, fmt.Errorf("cannot get ObjectMeta from type %v", objType)
 }
 
-// for filtered handlers the signature is different...
+type AddHandlerFuncType func(namespace string, sel labels.Selector, funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
+
 func (wf *WatchFactory) GetResourceHandlerFunc(objType reflect.Type) (AddHandlerFuncType, error) {
 	var f AddHandlerFuncType
 	var err error
 	switch objType {
-	case PodType:
-		f = wf.AddPodHandler
-	// case ServiceType:
-	// 	return wf.AddServiceHandler, nil
-	// case EndpointsType:
-	// 	if endpoints, ok := obj.(*kapi.Endpoints); ok {
-	// 		return &endpoints.ObjectMeta, nil
-	// 	}
 	case PolicyType:
-		f = wf.AddPolicyHandler
-	// case NamespaceType:
-	// 	if namespace, ok := obj.(*kapi.Namespace); ok {
-	// 		return &namespace.ObjectMeta, nil
-	// 	}
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddPolicyHandler(funcs, processExisting)
+		}
 	case NodeType:
-		f = wf.AddNodeHandler
-		// case EgressFirewallType:
-		// 	if egressFirewall, ok := obj.(*egressfirewallapi.EgressFirewall); ok {
-		// 		return &egressFirewall.ObjectMeta, nil
-		// 	}
-		// case EgressIPType:
-		// 	if egressIP, ok := obj.(*egressipapi.EgressIP); ok {
-		// 		return &egressIP.ObjectMeta, nil
-		// 	}
-		// case CloudPrivateIPConfigType:
-		// 	if cloudPrivateIPConfig, ok := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig); ok {
-		// 		return &cloudPrivateIPConfig.ObjectMeta, nil
-		// 	}
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddNodeHandler(funcs, processExisting)
+		}
+	case PeerServiceTypeVar:
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddFilteredServiceHandler(namespace, funcs, processExisting)
+		}
+	case PeerPodSelectorTypeVar, LocalPodSelectorTypeVar:
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddFilteredPodHandler(namespace, sel, funcs, processExisting)
+		}
+
+	case PeerNamespaceAndPodSelectorTypeVar, PeerNamespaceSelectorTypeVar:
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddFilteredNamespaceHandler(namespace, sel, funcs, processExisting)
+		}
+
+	case PeerPodForNamespaceAndPodSelectorType:
+		f = func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
+			return wf.AddFilteredPodHandler(namespace, sel, funcs, processExisting)
+		}
+
 	default:
 		err = fmt.Errorf("cannot get ObjectMeta from type %v", objType)
 	}
+
 	return f, err
 }
-
-type AddHandlerFuncType func(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler
 
 func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel labels.Selector, funcs cache.ResourceEventHandler, processExisting func([]interface{})) *Handler {
 	inf, ok := wf.informers[objType]

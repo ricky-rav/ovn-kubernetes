@@ -5,15 +5,18 @@ import (
 	"math/rand"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	kapi "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	kerrorsutil "k8s.io/apimachinery/pkg/util/errors"
 
 	"k8s.io/klog/v2"
 
 	factory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type retryObjEntry struct {
@@ -149,17 +152,21 @@ func splitNamespacedName(namespacedName string) (string, string) {
 
 }
 
-func HasResourceAnUpdateFunc(objType reflect.Type) (bool, error) {
-	// switch based on type
+func getNamespacedName(namespace, name string) string {
+	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func HasResourceAnUpdateFunc(objType reflect.Type) bool {
 	switch objType {
-	case factory.PolicyType:
-		// var kNP *knet.NetworkPolicy
-		return false, nil
-	case factory.NodeType:
-		return true, nil
-	default:
-		return false, fmt.Errorf("object type %v not supported", objType) // default error message
+	case factory.NodeType,
+		factory.PeerPodSelectorTypeVar,
+		factory.PeerPodForNamespaceAndPodSelectorType,
+		factory.LocalPodSelectorTypeVar:
+		// factory.PeerNamespaceAndPodSelectorTypeVar // has no update code
+		// factory.PeerNamespaceSelectorTypeVar // has no update code
+		return true
 	}
+	return false
 }
 
 func areResourceObjectsEqual(objType reflect.Type, obj1, obj2 interface{}) (bool, error) {
@@ -167,26 +174,55 @@ func areResourceObjectsEqual(objType reflect.Type, obj1, obj2 interface{}) (bool
 	// switch based on type
 	switch objType {
 	case factory.PolicyType:
-		// var kNP *knet.NetworkPolicy
-		kNP1, ok := obj1.(*knet.NetworkPolicy)
+		NP1, ok := obj1.(*knet.NetworkPolicy)
 		if !ok {
 			return false, fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
-		kNP2, ok := obj2.(*knet.NetworkPolicy)
+		NP2, ok := obj2.(*knet.NetworkPolicy)
 		if !ok {
 			return false, fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
-		return reflect.DeepEqual(kNP1, kNP2), nil
+		return reflect.DeepEqual(NP1, NP2), nil
+
 	case factory.NodeType:
-		kNode1, ok := obj1.(*kapi.Node)
+		node1, ok := obj1.(*kapi.Node)
 		if !ok {
 			return false, fmt.Errorf("could not cast interface{} object to *kapi.Node")
 		}
-		kNode2, ok := obj2.(*kapi.Node)
+		node2, ok := obj2.(*kapi.Node)
 		if !ok {
 			return false, fmt.Errorf("could not cast interface{} object to *kapi.Node")
 		}
-		return reflect.DeepEqual(kNode1, kNode2), nil
+		return reflect.DeepEqual(node1, node2), nil
+
+	case factory.PeerServiceTypeVar:
+		service1, ok := obj1.(*kapi.Service)
+		if !ok {
+			return false, fmt.Errorf("could not cast service1 of type interface{} to *kapi.Service")
+		}
+		service2, ok := obj2.(*kapi.Service)
+		if !ok {
+			return false, fmt.Errorf("could not cast service2 of type interface{} to *kapi.Service")
+		}
+		areEqual := reflect.DeepEqual(service1.Spec.ExternalIPs, service2.Spec.ExternalIPs) &&
+			reflect.DeepEqual(service1.Spec.ClusterIP, service2.Spec.ClusterIP) &&
+			reflect.DeepEqual(service1.Spec.ClusterIPs, service2.Spec.ClusterIPs) &&
+			reflect.DeepEqual(service1.Spec.Type, service2.Spec.Type) &&
+			reflect.DeepEqual(service1.Status.LoadBalancer.Ingress, service2.Status.LoadBalancer.Ingress)
+		return areEqual, nil
+
+	case factory.PeerPodSelectorTypeVar,
+		factory.PeerPodForNamespaceAndPodSelectorType,
+		factory.LocalPodSelectorTypeVar:
+		// For these types, there was no old vs new obj comparison in the original update code,
+		// so pretend they're always different so that the update code gets executed
+		return false, nil
+
+	case factory.PeerNamespaceSelectorTypeVar,
+		factory.PeerNamespaceAndPodSelectorTypeVar:
+		// For these types there is no update code, so pretend old and new
+		// objs are always equivalent and stop processing update event.
+		return true, nil
 	default:
 		err = fmt.Errorf("object type %v not supported", objType) // default error message
 	}
@@ -198,19 +234,43 @@ func GetResourceObjectKey(objType reflect.Type, obj interface{}) (string, error)
 	// switch based on type
 	switch objType {
 	case factory.PolicyType:
-		// var kNP *knet.NetworkPolicy
-		kNP, ok := obj.(*knet.NetworkPolicy)
+		NP, ok := obj.(*knet.NetworkPolicy)
 		if !ok {
 			return "", fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
-		key := getPolicyNamespacedName(kNP)
-		return key, nil
+		return getPolicyNamespacedName(NP), nil
+
 	case factory.NodeType:
-		kNode, ok := obj.(*kapi.Node)
+		node, ok := obj.(*kapi.Node)
 		if !ok {
 			return "", fmt.Errorf("could not cast interface{} object to *kapi.Node")
 		}
-		return kNode.Name, nil
+		return node.Name, nil
+
+	case factory.PeerServiceTypeVar:
+		service, ok := obj.(*kapi.Service)
+		if !ok {
+			return "", fmt.Errorf("could not cast interface{} object to *kapi.Service")
+		}
+		return getNamespacedName(service.Namespace, service.Name), nil
+
+	case factory.PeerPodSelectorTypeVar,
+		factory.PeerPodForNamespaceAndPodSelectorType,
+		factory.LocalPodSelectorTypeVar:
+		pod, ok := obj.(*kapi.Pod)
+		if !ok {
+			return "", fmt.Errorf("could not cast interface{} object to *kapi.Pod")
+		}
+		return getNamespacedName(pod.Namespace, pod.Name), nil
+
+	case factory.PeerNamespaceAndPodSelectorTypeVar,
+		factory.PeerNamespaceSelectorTypeVar:
+		namespace, ok := obj.(*kapi.Namespace)
+		if !ok {
+			return "", fmt.Errorf("could not cast interface{} object to *kapi.Namespace")
+		}
+		return namespace.Name, nil
+
 	default:
 		err = fmt.Errorf("object type %v not supported", objType) // default error message
 	}
@@ -223,46 +283,160 @@ func (oc *Controller) GetResourceObjectFromInformerCache(objType reflect.Type, k
 	// switch based on type
 	switch objType {
 	case factory.PolicyType:
-		// var ok bool
-		// var kNP *knet.NetworkPolicy
 		namespace, name := splitNamespacedName(key)
 		obj, err = oc.watchFactory.GetNetworkPolicy(namespace, name)
-		return obj, err
+
 	case factory.NodeType:
 		obj, err = oc.watchFactory.GetNode(key)
+
+	case factory.PeerServiceTypeVar:
+		namespace, name := splitNamespacedName(key)
+		obj, err = oc.watchFactory.GetService(namespace, name)
+
+	case factory.PeerPodSelectorTypeVar,
+		factory.PeerPodForNamespaceAndPodSelectorType:
+		namespace, name := splitNamespacedName(key)
+		obj, err = oc.watchFactory.GetPod(namespace, name)
+
+	case factory.PeerNamespaceAndPodSelectorTypeVar,
+		factory.PeerNamespaceSelectorTypeVar:
+		obj, err = oc.watchFactory.GetNamespace(key)
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		namespace, name := splitNamespacedName(key)
+		obj, err = oc.watchFactory.GetPod(namespace, name)
+
 	default:
 		err = fmt.Errorf("object type %v not supported", objType) // default error message
 	}
 	return obj, err
 }
 
-func (oc *Controller) addResourceObject(objType reflect.Type, obj interface{}) error {
+func (oc *Controller) addResourceObject(objType reflect.Type, obj, extraParameters interface{}) error {
 	// switch based on type
 	var err error
 	switch objType {
 	case factory.PolicyType:
-		kNP, ok := obj.(*knet.NetworkPolicy)
+		NP, ok := obj.(*knet.NetworkPolicy)
 		if !ok {
 			return fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
 		klog.Infof("addResourceObject called on network policy %s/%s",
-			kNP.Namespace, kNP.Name)
+			NP.Namespace, NP.Name)
 
-		if err = oc.addNetworkPolicy(kNP); err != nil {
+		if err = oc.addNetworkPolicy(NP); err != nil {
 			klog.Infof("Network Policy retry delete failed for %s/%s, will try again later: %v",
-				kNP.Namespace, kNP.Name, err)
+				NP.Namespace, NP.Name, err)
 			return err
 		}
+
 	case factory.NodeType:
-		kNode, ok := obj.(*kapi.Node)
+		node, ok := obj.(*kapi.Node)
 		if !ok {
 			return fmt.Errorf("could not cast interface{} object to *kapi.Node")
 		}
-		if err = oc.addNodeObj(kNode); err != nil {
+		if err = oc.addNodeObj(node); err != nil {
 			klog.Infof("Node retry delete failed for %s, will try again later: %v",
-				kNode.Name, err)
+				node.Name, err)
 			return err
 		}
+
+	case factory.PeerServiceTypeVar:
+		service, ok := obj.(*kapi.Service)
+		klog.Infof("addResourceObject called on peer service %s", service.Name)
+		if !ok {
+			return fmt.Errorf("could not cast peer service of type interface{} to *kapi.Service")
+		}
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		return oc.handlePeerServiceAdd(extraParameters.gp, service)
+
+	case factory.PeerPodSelectorTypeVar:
+		klog.Infof("addResourceObject called on peer pod")
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, obj)
+
+	case factory.PeerNamespaceAndPodSelectorTypeVar:
+		klog.Infof("addResourceObject called on PeerNamespaceAndPod")
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		namespace := obj.(*kapi.Namespace)
+		extraParameters.np.RLock()
+		alreadyDeleted := extraParameters.np.deleted
+		extraParameters.np.RUnlock()
+		if alreadyDeleted {
+			return nil
+		}
+		klog.Infof("addResourceObject called on PeerNamespaceAndPod, namespace=%s", namespace.Name)
+
+		retryPeerPods := &retryObjs{
+			retryMutex:                      sync.Mutex{},
+			entries:                         make(map[string]*retryObjEntry),
+			retryChan:                       make(chan struct{}, 1),
+			oType:                           factory.PeerPodForNamespaceAndPodSelectorType,
+			oTypeName:                       "PeerPodForNamespaceAndPodSelector",
+			namespaceForFilteredHandler:     namespace.Name,
+			labelSelectorForFilteredHandler: extraParameters.podSelector,
+			extraParameters: &NetworkPolicyExtraParameters{
+				gp: extraParameters.gp},
+		}
+
+		// The AddFilteredPodHandler call might call handlePeerPodSelectorAddUpdate
+		// on existing pods so we can't be holding the lock at this point
+		podHandler := oc.WatchResource(retryPeerPods)
+
+		extraParameters.np.Lock()
+		defer extraParameters.np.Unlock()
+		if extraParameters.np.deleted {
+			oc.watchFactory.RemovePodHandler(podHandler)
+			return nil
+		}
+		extraParameters.np.podHandlerList = append(extraParameters.np.podHandlerList, podHandler)
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, obj)
+
+	case factory.PeerNamespaceSelectorTypeVar:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		namespace := obj.(*kapi.Namespace)
+		// Update the ACL ...
+		return oc.handlePeerNamespaceSelectorOnUpdate(extraParameters.np, extraParameters.gp, func() bool {
+			// ... on condition that the added address set was not already in the 'gress policy
+			return extraParameters.gp.addNamespaceAddressSet(namespace.Name)
+		})
+
+	case factory.LocalPodSelectorTypeVar:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		return oc.handleLocalPodSelectorAddFunc(
+			extraParameters.policy,
+			extraParameters.np,
+			extraParameters.portGroupIngressDenyName,
+			extraParameters.portGroupEgressDenyName,
+			obj)
+
 	default:
 		return fmt.Errorf("object type %v not supported", objType) // default error message
 	}
@@ -270,15 +444,13 @@ func (oc *Controller) addResourceObject(objType reflect.Type, obj interface{}) e
 	return nil
 }
 
-func (oc *Controller) updateResourceObject(objType reflect.Type, newObj, oldObj interface{}) error {
+func (oc *Controller) updateResourceObject(objType reflect.Type, newObj, oldObj, extraParameters interface{}) error {
 	// switch based on type
-	if hasUpdateFunc, err := HasResourceAnUpdateFunc(objType); !hasUpdateFunc || err != nil {
-		return fmt.Errorf("no update function for resource type %v: %v", objType, err)
+	if hasUpdateFunc := HasResourceAnUpdateFunc(objType); !hasUpdateFunc {
+		return fmt.Errorf("no update function for resource type %v", objType)
 	}
 
 	switch objType {
-	case factory.PolicyType:
-		return fmt.Errorf("no update function for network policies")
 	case factory.NodeType:
 		newNode, ok := newObj.(*kapi.Node)
 		if !ok {
@@ -291,52 +463,209 @@ func (oc *Controller) updateResourceObject(objType reflect.Type, newObj, oldObj 
 
 		return oc.updateNodeObj(newNode, oldNode)
 
+	case factory.PeerPodSelectorTypeVar:
+		newPod := newObj.(*kapi.Pod)
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+
+		if util.PodCompleted(newPod) {
+			oc.handlePeerPodSelectorDelete(extraParameters.gp, oldObj)
+		} else {
+			oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, newObj)
+		}
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		// TODO Contrary to what we do for PeerPodSelectorTypeVar, here we
+		// consider the old object. Is this on purpose?
+		oldPod := oldObj.(*kapi.Pod)
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		if util.PodCompleted(oldPod) {
+			oc.handlePeerPodSelectorDelete(extraParameters.gp, oldObj)
+		} else {
+			oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, newObj)
+		}
+
+	case factory.LocalPodSelectorTypeVar:
+		newPod := newObj.(*kapi.Pod)
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		if util.PodCompleted(newPod) {
+			return oc.handleLocalPodSelectorDelFunc(
+				extraParameters.policy,
+				extraParameters.np,
+				extraParameters.portGroupIngressDenyName,
+				extraParameters.portGroupEgressDenyName,
+				oldObj)
+		} else {
+			return oc.handleLocalPodSelectorAddFunc(
+				extraParameters.policy,
+				extraParameters.np,
+				extraParameters.portGroupIngressDenyName,
+				extraParameters.portGroupEgressDenyName,
+				newObj)
+		}
+
 	default:
-		return fmt.Errorf("object type %v not supported", objType) // default error message
+		return fmt.Errorf("no update function for object type %v", objType) // default error message
 	}
 
 	return nil
 }
 
-// func watchFactory.GetNetworkPolicy(objMeta.Namespace, objMeta.Name)
-// oc.watchFactory.GetPod(pod.Namespace, pod.Name)
-func (oc *Controller) deleteResourceObject(objType reflect.Type, kObj, cachedObj interface{}) error {
+func (oc *Controller) deleteResourceObject(objType reflect.Type, kObj, cachedObj, extraParameters interface{}) error {
 	klog.Infof("deleteResourceObject called on objectType %v", objType)
 	// switch based on type
 	switch objType {
 	case factory.PolicyType:
 		var cachedNP *networkPolicy
-		kNP, ok := kObj.(*knet.NetworkPolicy)
+		NP, ok := kObj.(*knet.NetworkPolicy)
 		if !ok {
-			return fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
+			return fmt.Errorf("could not cast obj of type interface{} to *knet.NetworkPolicy")
 		}
 		if cachedObj != nil {
 			if cachedNP, ok = cachedObj.(*networkPolicy); !ok {
 				cachedNP = nil
 			}
 		}
-		klog.Infof("deleteResourceObject called on network policy %s/%s", kNP.Namespace, kNP.Name)
-
-		if err := oc.deleteNetworkPolicy(kNP, cachedNP); err != nil {
+		klog.Infof("deleteResourceObject called on network policy %s/%s", NP.Namespace, NP.Name)
+		if err := oc.deleteNetworkPolicy(NP, cachedNP); err != nil {
 			klog.Infof("Network Policy retry delete "+
 				"failed for %s/%s, will try again later: %v",
-				kNP.Namespace, kNP.Name, err)
+				NP.Namespace, NP.Name, err)
 			return err
-
 		}
+
 	case factory.NodeType:
-		kNode, ok := kObj.(*kapi.Node)
-		klog.Infof("deleteResourceObject called on node %s", kNode.Name)
+		node, ok := kObj.(*kapi.Node)
+		klog.Infof("deleteResourceObject called on node %s", node.Name)
 
 		if !ok {
-			return fmt.Errorf("could not cast interface{} object to *knet.Node")
+			return fmt.Errorf("could not cast obj of type interface{} to *knet.Node")
 		}
-		if err := oc.deleteNodeObj(kNode); err != nil {
+		if err := oc.deleteNodeObj(node); err != nil {
 			klog.Infof("Node retry delete failed for %s, will try again later: %v",
-				kNode.Name, err)
+				node.Name, err)
 			return err
 		}
+
+	case factory.PeerServiceTypeVar:
+		service, ok := kObj.(*kapi.Service)
+		klog.Infof("deleteResourceObject called on peer service %s", service.Name)
+		if !ok {
+			return fmt.Errorf("could not cast peer service of type interface{} to *kapi.Service")
+		}
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		if err := oc.handlePeerServiceDelete(extraParameters.gp, service); err != nil {
+			klog.Infof("Peer service retry delete failed for %s, will try again later: %v",
+				service.Name, err)
+			return err
+		}
+
+	case factory.PeerPodSelectorTypeVar:
+		// TODO once you're done debugging, you can remove the casting here below
+		// and call handlePeerPodSelectorDelete with kObj
+		pod, ok := kObj.(*kapi.Pod)
+		klog.Infof("deleteResourceObject called on peer pod %s", pod.Name)
+		if !ok {
+			return fmt.Errorf("could not cast peer pod of type interface{} to *kapi.Pod")
+		}
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		if err := oc.handlePeerPodSelectorDelete(extraParameters.gp, pod); err != nil {
+			klog.Infof("Peer pod retry delete failed for %s, will try again later: %v",
+				pod.Name, err)
+			return err
+		}
+
+	case factory.PeerNamespaceAndPodSelectorTypeVar:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		// when the namespace labels no longer apply
+		// remove the namespaces pods from the address_set
+		var errs []error
+		namespace := kObj.(*kapi.Namespace)
+		pods, _ := oc.watchFactory.GetPods(namespace.Name)
+
+		for _, pod := range pods {
+			if err := oc.handlePeerPodSelectorDelete(extraParameters.gp, pod); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return kerrorsutil.NewAggregate(errs)
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		return oc.handlePeerPodSelectorDelete(extraParameters.gp, kObj)
+
+	case factory.PeerNamespaceSelectorTypeVar:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+		namespace := kObj.(*kapi.Namespace)
+		// Remove namespace address set from the *gress policy in cache
+		// (done in gress.delNamespaceAddressSet()), and then update ACLs
+		return oc.handlePeerNamespaceSelectorOnUpdate(extraParameters.np, extraParameters.gp, func() bool {
+			// ... on condition that the removed address set was in the 'gress policy
+			return extraParameters.gp.delNamespaceAddressSet(namespace.Name)
+		})
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+
+		return oc.handleLocalPodSelectorDelFunc(
+			extraParameters.policy,
+			extraParameters.np,
+			extraParameters.portGroupIngressDenyName,
+			extraParameters.portGroupEgressDenyName,
+			kObj)
+	case factory.LocalPodSelectorTypeVar:
+		extraParameters, ok := extraParameters.(*NetworkPolicyExtraParameters)
+		if !ok {
+			return fmt.Errorf("could not cast extraParameters to " +
+				" *NetworkPolicyExtraParameters")
+		}
+
+		return oc.handleLocalPodSelectorDelFunc(
+			extraParameters.policy,
+			extraParameters.np,
+			extraParameters.portGroupIngressDenyName,
+			extraParameters.portGroupEgressDenyName,
+			kObj)
+
+	default:
+		return fmt.Errorf("object type %v not supported", objType) // default error message
 	}
+
 	return nil
 }
 
@@ -382,7 +711,8 @@ func (oc *Controller) iterateRetryResourceObjects(r *retryObjs, updateAll bool) 
 			if entry.oldObj != nil {
 				klog.Infof("%s retry: removing old object for %s",
 					r.oTypeName, objKey)
-				if err := oc.deleteResourceObject(r.oType, entry.oldObj, entry.config); err != nil {
+				if err := oc.deleteResourceObject(r.oType, entry.oldObj,
+					entry.config, r.extraParameters); err != nil {
 					klog.Infof("%s retry delete failed for %s, will try again later: %v",
 						r.oTypeName, objKey, err)
 					entry.timeStamp = time.Now()
@@ -396,7 +726,8 @@ func (oc *Controller) iterateRetryResourceObjects(r *retryObjs, updateAll bool) 
 			if objectToCreate != nil {
 				klog.Infof("%s retry: Creating object for %s",
 					r.oTypeName, objKey)
-				if err := oc.addResourceObject(r.oType, objectToCreate); err != nil {
+				if err := oc.addResourceObject(r.oType, objectToCreate,
+					r.extraParameters); err != nil {
 					klog.Infof("%s retry create "+
 						"failed for %s, will try again later: %v",
 						r.oTypeName, objKey, err)
@@ -432,27 +763,77 @@ func (oc *Controller) periodicallyRetryResourceObjects(r *retryObjs) {
 	}
 }
 
-func (oc *Controller) getSyncResourceObjectsFunc(objType reflect.Type) (func([]interface{}), error) {
+func (oc *Controller) getSyncResourceObjectsFunc(
+	objType reflect.Type,
+	inputSyncFunc func([]interface{}) error,
+	extraParameters interface{}) (func([]interface{}), error) {
+
 	var syncRetriableFunc func([]interface{}) error
 	var syncFunc func([]interface{})
 
 	var name string
-	// switch based on type
+	// switch based on type. If a type needs a retriable sync funcion, it will
+	// set syncRetriableFunc and will keep syncFunc=nil. Otherwise, it will
+	// directly set syncFunc.
 	switch objType {
 	case factory.PolicyType:
 		name = "syncNetworkPolicies"
 		syncRetriableFunc = oc.syncNetworkPoliciesRetriable
+
 	case factory.NodeType:
 		name = "syncNodes"
 		syncRetriableFunc = oc.syncNodesRetriable
+
+	case factory.PeerServiceTypeVar,
+		factory.PeerNamespaceAndPodSelectorTypeVar:
+		name = ""
+		syncRetriableFunc = nil
+
+	case factory.PeerPodSelectorTypeVar:
+		name = "PeerPodSelector"
+		extraParameters := extraParameters.(*NetworkPolicyExtraParameters)
+		syncRetriableFunc = func(objs []interface{}) error {
+			return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, objs...)
+		}
+
+	case factory.PeerPodForNamespaceAndPodSelectorType:
+		name = "PeerPodForNamespaceAndPodSelector"
+		extraParameters := extraParameters.(*NetworkPolicyExtraParameters)
+		syncRetriableFunc = func(objs []interface{}) error {
+			return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, objs...)
+		}
+
+	case factory.PeerNamespaceSelectorTypeVar:
+		name = "PeerNamespaceSelector"
+		extraParameters := extraParameters.(*NetworkPolicyExtraParameters)
+		// the function below will never fail, so there's no point in making it retriable...
+		syncFunc = func(i []interface{}) {
+			// This needs to be a write lock because there's no locking around 'gress policies
+			extraParameters.np.Lock()
+			defer extraParameters.np.Unlock()
+			// We load the existing address set into the 'gress policy.
+			// Notice that this will make the AddFunc for this initial
+			// address set a noop.
+			// The ACL must be set explicitly after setting up this handler
+			// for the address set to be considered.
+			extraParameters.gp.addNamespaceAddressSets(i)
+			return
+		}
+	case factory.LocalPodSelectorTypeVar:
+		name = "LocalPodSelectorTypeVar"
+		syncRetriableFunc = inputSyncFunc
+
 	default:
 		return nil, fmt.Errorf("object type %v not supported", objType) // default error message
 	}
 
-	syncFunc = func(objects []interface{}) {
-		klog.Infof("I am a sync func!")
-		oc.syncWithRetry(name, func() error { return syncRetriableFunc(objects) })
+	if syncFunc == nil {
+		syncFunc = func(objects []interface{}) {
+			if syncRetriableFunc == nil {
+				return
+			}
+			oc.syncWithRetry(name, func() error { return syncRetriableFunc(objects) })
+		}
 	}
 	return syncFunc, nil
-
 }
