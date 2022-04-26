@@ -359,7 +359,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV4IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Create(context.TODO(), &egressPod, metav1.CreateOptions{})
 
 				expectedNatLogicalPort := "k8s-node2"
@@ -570,7 +570,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV4IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()
@@ -769,7 +769,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()
@@ -931,7 +931,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()
@@ -1092,7 +1092,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				}
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Update(context.TODO(), podUpdate, metav1.UpdateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -1277,7 +1277,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()
@@ -1414,7 +1414,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 				fakeOvn.controller.eIPC.allocator.cache[node1.name] = &node1
 				fakeOvn.controller.eIPC.allocator.cache[node2.name] = &node2
 
@@ -1718,7 +1718,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV4IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()
@@ -1997,7 +1997,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 				fakeOvn.controller.eIPC.allocator.cache[node1.name] = &node1
 				fakeOvn.controller.eIPC.allocator.cache[node2.name] = &node2
 
@@ -2152,7 +2152,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV6IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 				fakeOvn.controller.eIPC.allocator.cache[node1.name] = &node1
 				fakeOvn.controller.eIPC.allocator.cache[node2.name] = &node2
 
@@ -3148,7 +3148,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 
 				i, n, _ := net.ParseCIDR(podV4IP + "/23")
 				n.IP = i
-				fakeOvn.controller.logicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
+				fakeOvn.controller.LogicalPortCache.add("", util.GetLogicalPortName(egressPod.Namespace, egressPod.Name), "", nil, []*net.IPNet{n})
 
 				fakeOvn.controller.WatchEgressIPNamespaces()
 				fakeOvn.controller.WatchEgressIPPods()

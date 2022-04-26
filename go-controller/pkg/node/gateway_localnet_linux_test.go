@@ -53,6 +53,7 @@ func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher 
 	return &fNPW
 }
 
+// QUESTION: why aren't we calling the real code?
 func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNClientset, fakeMgmtPortConfig *managementPortConfig) error {
 	if err := initLocalGatewayIPTables(); err != nil {
 		return err

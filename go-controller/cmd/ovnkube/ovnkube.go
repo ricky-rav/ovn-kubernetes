@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -242,8 +243,13 @@ func runOvnKube(ctx *cli.Context) error {
 		// register prometheus metrics that do not depend on becoming ovnkube-master leader
 		metrics.RegisterMasterBase()
 
+		retryPack := &ovn.RetryObjsPack{
+			retryPods:            retry.NewRetryObjs(factory.PodType, "", nil, nil, nil),
+			retryNodes:           retry.NewRetryObjs(factory.NodeType, "", nil, nil, nil),
+			retryNetworkPolicies: retry.NewRetryObjs(factory.NetworkPolicyType, "", nil, nil, nil)}
+
 		ovnController := ovn.NewOvnController(ovnClientset, masterWatchFactory, stopChan, nil,
-			libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient))
+			libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient), retryPack)
 		if err := ovnController.Start(master, wg, ctx.Context); err != nil {
 			return err
 		}

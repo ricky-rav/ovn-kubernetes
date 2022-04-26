@@ -156,7 +156,7 @@ func (oc *Controller) addPodExternalGW(pod *kapi.Pod) error {
 	foundGws, err := getExGwPodIPs(pod)
 	if err != nil {
 		klog.Errorf("Error getting exgw IPs for pod: %s, error: %v", pod.Name, err)
-		oc.recordPodEvent(err, pod)
+		oc.RecordPodEvent(err, pod)
 		return nil
 	}
 
@@ -216,7 +216,7 @@ func (oc *Controller) addExternalGWsForNamespace(egress gatewayInfo, nsInfo *nam
 
 // addGWRoutesForNamespace handles adding routes for all existing pods in namespace
 func (oc *Controller) addGWRoutesForNamespace(namespace string, egress gatewayInfo) error {
-	existingPods, err := oc.watchFactory.GetPods(namespace)
+	existingPods, err := oc.WatchFactory.GetPods(namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get all the pods (%v)", err)
 	}
@@ -812,7 +812,7 @@ func (oc *Controller) cleanUpBFDEntry(gatewayIP, gatewayRouter, prefix string) e
 // external gateway routes. In case no second bridge is configured, we
 // use the default one and the prefix is empty.
 func (oc *Controller) extSwitchPrefix(nodeName string) (string, error) {
-	node, err := oc.watchFactory.GetNode(nodeName)
+	node, err := oc.WatchFactory.GetNode(nodeName)
 	if err != nil {
 		return "", errors.Wrapf(err, "extSwitchPrefix: failed to find node %s", nodeName)
 	}
@@ -991,7 +991,7 @@ func getExGwPodIPs(gatewayPod *kapi.Pod) ([]net.IP, error) {
 }
 
 func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[string][]string) {
-	namespaces, err := oc.watchFactory.GetNamespaces()
+	namespaces, err := oc.WatchFactory.GetNamespaces()
 	if err != nil {
 		klog.Errorf("Error getting all namespaces for exgw ecmp route sync: %v", err)
 		return
@@ -1007,7 +1007,7 @@ func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[
 			continue
 		}
 		// get all pods in the namespace
-		nsPods, err := oc.watchFactory.GetPods(namespace.Name)
+		nsPods, err := oc.WatchFactory.GetPods(namespace.Name)
 		if err != nil {
 			klog.Errorf("Unable to clean ExGw ECMP routes for namespace: %s, %v",
 				namespace, err)
@@ -1042,7 +1042,7 @@ func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[
 
 func (oc *Controller) buildClusterECMPCacheFromPods(clusterRouteCache map[string][]string) {
 	// Get all Pods serving as exgws
-	pods, err := oc.watchFactory.GetAllPods()
+	pods, err := oc.WatchFactory.GetAllPods()
 	if err != nil {
 		klog.Error("Error getting all pods for exgw ecmp route sync: %v", err)
 		return
@@ -1053,7 +1053,7 @@ func (oc *Controller) buildClusterECMPCacheFromPods(clusterRouteCache map[string
 			continue
 		}
 		// get all pods in the namespace
-		nsPods, err := oc.watchFactory.GetPods(podRoutingNamespaceAnno)
+		nsPods, err := oc.WatchFactory.GetPods(podRoutingNamespaceAnno)
 		if err != nil {
 			klog.Errorf("Unable to clean ExGw ECMP routes for exgw: %s, serving namespace: %s, %v",
 				pod.Name, podRoutingNamespaceAnno, err)

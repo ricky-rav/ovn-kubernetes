@@ -240,7 +240,7 @@ func (oc *Controller) reconcileEgressIP(old, new *egressipv1.EgressIP) (err erro
 		// matching the old and not matching the new, and add setup for the pod
 		// matching the new and which didn't match the old.
 		if !reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && reflect.DeepEqual(newPodSelector, oldPodSelector) {
-			namespaces, err := oc.watchFactory.GetNamespaces()
+			namespaces, err := oc.WatchFactory.GetNamespaces()
 			if err != nil {
 				return err
 			}
@@ -261,12 +261,12 @@ func (oc *Controller) reconcileEgressIP(old, new *egressipv1.EgressIP) (err erro
 			// matching the old and not matching the new, and add setup for the pod
 			// matching the new and which didn't match the old.
 		} else if reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && !reflect.DeepEqual(newPodSelector, oldPodSelector) {
-			namespaces, err := oc.watchFactory.GetNamespacesBySelector(newEIP.Spec.NamespaceSelector)
+			namespaces, err := oc.WatchFactory.GetNamespacesBySelector(newEIP.Spec.NamespaceSelector)
 			if err != nil {
 				return err
 			}
 			for _, namespace := range namespaces {
-				pods, err := oc.watchFactory.GetPods(namespace.Name)
+				pods, err := oc.WatchFactory.GetPods(namespace.Name)
 				if err != nil {
 					return err
 				}
@@ -291,7 +291,7 @@ func (oc *Controller) reconcileEgressIP(old, new *egressipv1.EgressIP) (err erro
 			// old ones and not matching the new ones, and add setup for all
 			// matching the new ones but which didn't match the old ones.
 		} else if !reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && !reflect.DeepEqual(newPodSelector, oldPodSelector) {
-			namespaces, err := oc.watchFactory.GetNamespaces()
+			namespaces, err := oc.WatchFactory.GetNamespaces()
 			if err != nil {
 				return err
 			}
@@ -309,7 +309,7 @@ func (oc *Controller) reconcileEgressIP(old, new *egressipv1.EgressIP) (err erro
 				// which match the new pod selector or if the podSelector is empty
 				// then just perform the setup.
 				if newNamespaceSelector.Matches(namespaceLabels) && !oldNamespaceSelector.Matches(namespaceLabels) {
-					pods, err := oc.watchFactory.GetPods(namespace.Name)
+					pods, err := oc.WatchFactory.GetPods(namespace.Name)
 					if err != nil {
 						return err
 					}
@@ -325,7 +325,7 @@ func (oc *Controller) reconcileEgressIP(old, new *egressipv1.EgressIP) (err erro
 				// If the namespace continues to match, look at the pods
 				// selector and pods in that namespace.
 				if newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
-					pods, err := oc.watchFactory.GetPods(namespace.Name)
+					pods, err := oc.WatchFactory.GetPods(namespace.Name)
 					if err != nil {
 						return err
 					}
@@ -374,7 +374,7 @@ func (oc *Controller) reconcileEgressIPNamespace(old, new *v1.Namespace) error {
 	// all "blue" pods in namespace A, and a second EgressIP object match all
 	// "red" pods in namespace A), so continue iterating all EgressIP objects
 	// before finishing.
-	egressIPs, err := oc.watchFactory.GetEgressIPs()
+	egressIPs, err := oc.WatchFactory.GetEgressIPs()
 	if err != nil {
 		return err
 	}
@@ -399,14 +399,14 @@ func (oc *Controller) reconcileEgressIPPod(old, new *v1.Pod) (err error) {
 	namespace := &v1.Namespace{}
 	if old != nil {
 		oldPod = old
-		namespace, err = oc.watchFactory.GetNamespace(oldPod.Namespace)
+		namespace, err = oc.WatchFactory.GetNamespace(oldPod.Namespace)
 		if err != nil {
 			return err
 		}
 	}
 	if new != nil {
 		newPod = new
-		namespace, err = oc.watchFactory.GetNamespace(newPod.Namespace)
+		namespace, err = oc.WatchFactory.GetNamespace(newPod.Namespace)
 		if err != nil {
 			return err
 		}
@@ -432,7 +432,7 @@ func (oc *Controller) reconcileEgressIPPod(old, new *v1.Pod) (err error) {
 	// gets changed to a blue label: we need add and remove the set up for both
 	// EgressIP obejcts - since we can't be sure of which EgressIP object we
 	// process first, always iterate all.
-	egressIPs, err := oc.watchFactory.GetEgressIPs()
+	egressIPs, err := oc.WatchFactory.GetEgressIPs()
 	if err != nil {
 		return err
 	}
@@ -749,7 +749,7 @@ func (oc *Controller) executeCloudPrivateIPConfigChange(egressIPName string, toA
 func (oc *Controller) executeCloudPrivateIPConfigOps(egressIPName string, ops map[string]*cloudPrivateIPConfigOp) error {
 	for egressIP, op := range ops {
 		cloudPrivateIPConfigName := ipStringToCloudPrivateIPConfigName(egressIP)
-		cloudPrivateIPConfig, err := oc.watchFactory.GetCloudPrivateIPConfig(cloudPrivateIPConfigName)
+		cloudPrivateIPConfig, err := oc.WatchFactory.GetCloudPrivateIPConfig(cloudPrivateIPConfigName)
 		// toAdd and toDelete is non-empty, this indicates an UPDATE for which
 		// the object **must** exist, if not: that's an error.
 		if op.toAdd != "" && op.toDelete != "" {
@@ -912,7 +912,7 @@ func (oc *Controller) addAllocatorEgressIPAssignments(name string, statusAssignm
 }
 
 func (oc *Controller) addEgressIPAssignments(name string, statusAssignments []egressipv1.EgressIPStatusItem, namespaceSelector, podSelector metav1.LabelSelector) error {
-	namespaces, err := oc.watchFactory.GetNamespacesBySelector(namespaceSelector)
+	namespaces, err := oc.WatchFactory.GetNamespacesBySelector(namespaceSelector)
 	if err != nil {
 		return err
 	}
@@ -929,12 +929,12 @@ func (oc *Controller) addNamespaceEgressIPAssignments(name string, statusAssignm
 	var err error
 	selector, _ := metav1.LabelSelectorAsSelector(&podSelector)
 	if !selector.Empty() {
-		pods, err = oc.watchFactory.GetPodsBySelector(namespace.Name, podSelector)
+		pods, err = oc.WatchFactory.GetPodsBySelector(namespace.Name, podSelector)
 		if err != nil {
 			return err
 		}
 	} else {
-		pods, err = oc.watchFactory.GetPods(namespace.Name)
+		pods, err = oc.WatchFactory.GetPods(namespace.Name)
 		if err != nil {
 			return err
 		}
@@ -971,16 +971,16 @@ func (oc *Controller) addPodEgressIPAssignments(name string, statusAssignments [
 		// addLogicalPort has finished successfully setting up networking for
 		// the pod, so we can proceed with retrieving its IP and deleting the
 		// external GW configuration created in addLogicalPort for the pod.
-		logicalPort, err := oc.logicalPortCache.get(util.GetLogicalPortName(pod.Namespace, pod.Name))
+		logicalPort, err := oc.LogicalPortCache.Get(util.GetLogicalPortName(pod.Namespace, pod.Name))
 		if err != nil {
 			return nil
 		}
 		podState = &podAssignmentState{
 			egressStatuses: make(map[egressipv1.EgressIPStatusItem]string),
-			podIPs:         logicalPort.ips,
+			podIPs:         logicalPort.Ips,
 		}
 		oc.eIPC.podAssignment[podKey] = podState
-		if err := oc.eIPC.deletePerPodGRSNAT(pod, logicalPort.ips); err != nil {
+		if err := oc.eIPC.deletePerPodGRSNAT(pod, logicalPort.Ips); err != nil {
 			return err
 		}
 	} else {
@@ -1044,12 +1044,12 @@ func (oc *Controller) deleteNamespaceEgressIPAssignment(name string, statusAssig
 	var err error
 	selector, _ := metav1.LabelSelectorAsSelector(&podSelector)
 	if !selector.Empty() {
-		pods, err = oc.watchFactory.GetPodsBySelector(namespace.Name, podSelector)
+		pods, err = oc.WatchFactory.GetPodsBySelector(namespace.Name, podSelector)
 		if err != nil {
 			return err
 		}
 	} else {
-		pods, err = oc.watchFactory.GetPods(namespace.Name)
+		pods, err = oc.WatchFactory.GetPods(namespace.Name)
 		if err != nil {
 			return err
 		}
@@ -1283,13 +1283,13 @@ func (oc *Controller) generateCacheForEgressIP(eIPs []interface{}) (map[string]e
 			egressIPCache[egressIP.Name].egressIPs.Insert(status.EgressIP)
 		}
 
-		namespaces, err := oc.watchFactory.GetNamespacesBySelector(egressIP.Spec.NamespaceSelector)
+		namespaces, err := oc.WatchFactory.GetNamespacesBySelector(egressIP.Spec.NamespaceSelector)
 		if err != nil {
 			klog.Errorf("Error building egress IP sync cache, cannot retrieve namespaces for EgressIP: %s, err: %v", egressIP.Name, err)
 			continue
 		}
 		for _, namespace := range namespaces {
-			pods, err := oc.watchFactory.GetPodsBySelector(namespace.Name, egressIP.Spec.PodSelector)
+			pods, err := oc.WatchFactory.GetPodsBySelector(namespace.Name, egressIP.Spec.PodSelector)
 			if err != nil {
 				klog.Errorf("Error building egress IP sync cache, cannot retrieve pods for namespace: %s and egress IP: %s, err: %v", namespace.Name, egressIP.Name, err)
 				continue
@@ -1299,12 +1299,12 @@ func (oc *Controller) generateCacheForEgressIP(eIPs []interface{}) (map[string]e
 					continue
 				}
 				// FIXME(trozet): potential race where pod is not yet added in the cache by the pod handler
-				logicalPort, err := oc.logicalPortCache.get(util.GetLogicalPortName(pod.Namespace, pod.Name))
+				logicalPort, err := oc.LogicalPortCache.Get(util.GetLogicalPortName(pod.Namespace, pod.Name))
 				if err != nil {
 					klog.Errorf("Error getting logical port %s, err: %v", util.GetLogicalPortName(pod.Namespace, pod.Name), err)
 					continue
 				}
-				for _, ipNet := range logicalPort.ips {
+				for _, ipNet := range logicalPort.Ips {
 					egressIPCache[egressIP.Name].podIPs.Insert(ipNet.IP.String())
 				}
 			}
@@ -1782,8 +1782,8 @@ type egressIPController struct {
 	allocator allocator
 	// libovsdb northbound client interface
 	nbClient libovsdbclient.Client
-	// watchFactory watching k8s objects
-	watchFactory *factory.WatchFactory
+	// WatchFactory watching k8s objects
+	WatchFactory *factory.WatchFactory
 }
 
 // addPodEgressIPAssignment will program OVN with logical router policies
@@ -1828,9 +1828,9 @@ func (e *egressIPController) deletePodEgressIPAssignment(egressIPName string, st
 // external GW setup in those cases.
 func (e *egressIPController) addPerPodGRSNAT(podNamespace, podName string, podIPs []*net.IPNet) error {
 	if config.Gateway.DisableSNATMultipleGWs {
-		if pod, err := e.watchFactory.GetPod(podNamespace, podName); err == nil {
+		if pod, err := e.WatchFactory.GetPod(podNamespace, podName); err == nil {
 			// if the pod still exists, add snats to->nodeIP (on the node where the pod exists) for these podIPs after deleting the snat to->egressIP
-			extIPs, err := getExternalIPsGRSNAT(e.watchFactory, pod.Spec.NodeName)
+			extIPs, err := getExternalIPsGRSNAT(e.WatchFactory, pod.Spec.NodeName)
 			if err != nil {
 				return err
 			}
@@ -1846,7 +1846,7 @@ func (e *egressIPController) addPerPodGRSNAT(podNamespace, podName string, podIP
 func (e *egressIPController) deletePerPodGRSNAT(pod *kapi.Pod, podIPs []*net.IPNet) error {
 	if config.Gateway.DisableSNATMultipleGWs {
 		// remove snats to->nodeIP (from the node where pod exists) for these podIPs before adding the snat to->egressIP
-		extIPs, err := getExternalIPsGRSNAT(e.watchFactory, pod.Spec.NodeName)
+		extIPs, err := getExternalIPsGRSNAT(e.WatchFactory, pod.Spec.NodeName)
 		if err != nil {
 			return err
 		}
@@ -2020,7 +2020,7 @@ func (oc *Controller) checkEgressNodesReachability() {
 		}
 		oc.eIPC.allocator.Unlock()
 		for nodeName, shouldDelete := range reAddOrDelete {
-			node, err := oc.watchFactory.GetNode(nodeName)
+			node, err := oc.WatchFactory.GetNode(nodeName)
 			if err != nil {
 				klog.Errorf("Node: %s reachability changed, but could not retrieve node from cache, err: %v", nodeName, err)
 			}

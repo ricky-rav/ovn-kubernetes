@@ -286,7 +286,7 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 		// if old gw annotation was empty, new one must not be empty, so we should remove any per pod SNAT towards nodeIP
 		if oldGWAnnotation == "" {
 			if config.Gateway.DisableSNATMultipleGWs {
-				existingPods, err := oc.watchFactory.GetPods(old.Name)
+				existingPods, err := oc.WatchFactory.GetPods(old.Name)
 				if err != nil {
 					klog.Errorf("Failed to get all the pods (%v)", err)
 				}
@@ -304,7 +304,7 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 						ips = append(ips, &net.IPNet{IP: podIP})
 					}
 					if len(ips) > 0 {
-						if extIPs, err := getExternalIPsGRSNAT(oc.watchFactory, pod.Spec.NodeName); err != nil {
+						if extIPs, err := getExternalIPsGRSNAT(oc.WatchFactory, pod.Spec.NodeName); err != nil {
 							klog.Error(err.Error())
 						} else if err = deletePerPodGRSNAT(oc.nbClient, pod.Spec.NodeName, extIPs, ips); err != nil {
 							klog.Error(err.Error())
@@ -330,7 +330,7 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 		// if new annotation is empty, exgws were removed, may need to add SNAT per pod
 		// check if there are any pod gateways serving this namespace as well
 		if gwAnnotation == "" && len(nsInfo.routingExternalPodGWs) == 0 && config.Gateway.DisableSNATMultipleGWs {
-			existingPods, err := oc.watchFactory.GetPods(old.Name)
+			existingPods, err := oc.WatchFactory.GetPods(old.Name)
 			if err != nil {
 				klog.Errorf("Failed to get all the pods (%v)", err)
 			}
@@ -339,7 +339,7 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 				if err != nil {
 					klog.Error(err.Error())
 				} else {
-					if extIPs, err := getExternalIPsGRSNAT(oc.watchFactory, pod.Spec.NodeName); err != nil {
+					if extIPs, err := getExternalIPsGRSNAT(oc.WatchFactory, pod.Spec.NodeName); err != nil {
 						klog.Error(err.Error())
 					} else if err = addOrUpdatePerPodGRSNAT(oc.nbClient, pod.Spec.NodeName, extIPs, podAnnotation.IPs); err != nil {
 						klog.Error(err.Error())
@@ -480,7 +480,7 @@ func (oc *Controller) ensureNamespaceLocked(ns string, readOnly bool, namespace 
 	// nsInfo and namespace didn't exist, get it from lister
 	if namespace == nil {
 		var err error
-		namespace, err = oc.watchFactory.GetNamespace(ns)
+		namespace, err = oc.WatchFactory.GetNamespace(ns)
 		if err != nil {
 			namespace, err = oc.client.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 			if err != nil {
@@ -561,7 +561,7 @@ func (oc *Controller) createNamespaceAddrSetAllPods(ns string) (addressset.Addre
 	if config.Kubernetes.HostNetworkNamespace != "" &&
 		ns == config.Kubernetes.HostNetworkNamespace {
 		// add the mp0 interface addresses to this namespace.
-		existingNodes, err := oc.watchFactory.GetNodes()
+		existingNodes, err := oc.WatchFactory.GetNodes()
 		if err != nil {
 			klog.Errorf("Failed to get all nodes (%v)", err)
 		} else {
@@ -590,7 +590,7 @@ func (oc *Controller) createNamespaceAddrSetAllPods(ns string) (addressset.Addre
 		}
 	}
 	// Get all the pods in the namespace and append their IP to the address_set
-	existingPods, err := oc.watchFactory.GetPods(ns)
+	existingPods, err := oc.WatchFactory.GetPods(ns)
 	if err != nil {
 		klog.Errorf("Failed to get all the pods (%v)", err)
 	} else {

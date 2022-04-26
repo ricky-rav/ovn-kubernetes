@@ -313,3 +313,11 @@ func UpdateNodeSwitchExcludeIPs(nbClient libovsdbclient.Client, nodeName string,
 
 	return nil
 }
+
+// type retryObjsOvnMaster interface {
+// 	watchOVNMasterResource(oc *ovnkmaster.Controller) *factory.Handler
+// } // .. or nil?
+
+// type retryObjsOvnNode interface {
+// 	watchOVNNodeResource(n *ovnknode.OvnNode) *factory.Handler
+// } // .. or nil?

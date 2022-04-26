@@ -1,4 +1,4 @@
-package ovn
+package retry
 
 import (
 	"fmt"
@@ -19,6 +19,8 @@ import (
 	"k8s.io/klog/v2"
 
 	factory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ovnknode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
+	ovnkmaster "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -40,7 +42,7 @@ type retryObjEntry struct {
 	ignore bool
 }
 
-type retryObjs struct {
+type RetryObjs struct {
 	retryMutex sync.Mutex
 	// cache to hold object needs retry to successfully complete processing
 	entries map[string]*retryObjEntry
@@ -59,16 +61,16 @@ type retryObjs struct {
 	extraParameters interface{}
 }
 
-// NewRetryObjs returns a new retryObjs instance, packed with the desired input parameters.
+// NewRetryObjs returns a new RetryObjs instance, packed with the desired input parameters.
 // The returned struct is essential for watchResource and the whole retry logic.
 func NewRetryObjs(
 	objectType reflect.Type,
 	namespaceForFilteredHandler string,
 	labelSelectorForFilteredHandler labels.Selector,
 	syncFunc func([]interface{}) error,
-	extraParameters interface{}) *retryObjs {
+	extraParameters interface{}) *RetryObjs {
 
-	return &retryObjs{
+	return &RetryObjs{
 		retryMutex:                      sync.Mutex{},
 		entries:                         make(map[string]*retryObjEntry),
 		retryChan:                       make(chan struct{}, 1),
@@ -80,8 +82,40 @@ func NewRetryObjs(
 	}
 }
 
+// type RetryObjsInterface
+// *** I can say that this NewRetryObjs returns an interface with a constructor and a watchrsource method.
+// Even then, how can I replicate it
+
+// same as NewRetryObjs, but callable from an existing instance
+func (r *RetryObjs) NewRetryObjs(
+	objectType reflect.Type,
+	namespaceForFilteredHandler string,
+	labelSelectorForFilteredHandler labels.Selector,
+	syncFunc func([]interface{}) error,
+	extraParameters interface{}) *RetryObjs {
+
+	return NewRetryObjs(objectType, namespaceForFilteredHandler,
+		labelSelectorForFilteredHandler, syncFunc, extraParameters)
+}
+
+func (r *RetryObjs) NewRetryObjsOVNMaster(
+	objectType reflect.Type,
+	namespaceForFilteredHandler string,
+	labelSelectorForFilteredHandler labels.Selector,
+	syncFunc func([]interface{}) error,
+	extraParameters interface{}) ovnkmaster.RetryObjsOVNMaster {
+
+	var newRetryObjs ovnkmaster.RetryObjsOVNMaster = NewRetryObjs(
+		objectType, namespaceForFilteredHandler,
+		labelSelectorForFilteredHandler, syncFunc, extraParameters)
+
+	// tmp, _ := newRetryObjs.(ovnkmaster.RetryObjsOVNMaster)
+
+	return newRetryObjs.(ovnkmaster.RetryObjsOVNMaster)
+}
+
 // addRetryObj adds an object to be retried later for an add event
-func (r *retryObjs) addRetryObj(obj interface{}) {
+func (r *RetryObjs) addRetryObj(obj interface{}) {
 	key, err := getResourceKey(r.oType, obj)
 	if err != nil {
 		klog.Errorf("Could not get the key of %v %v: %v", r.oType, obj, err)
@@ -93,7 +127,7 @@ func (r *retryObjs) addRetryObj(obj interface{}) {
 
 // initRetryObjWithAdd tracks an object that failed to be created to potentially retry later
 // initially it is marked as skipped for retry loop (ignore = true)
-func (r *retryObjs) initRetryObjWithAdd(obj interface{}, key string) {
+func (r *RetryObjs) initRetryObjWithAdd(obj interface{}, key string) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -107,7 +141,7 @@ func (r *retryObjs) initRetryObjWithAdd(obj interface{}, key string) {
 
 // initRetryWithDelete tracks an object that failed to be deleted to potentially retry later
 // initially it is marked as skipped for retry loop (ignore = true)
-func (r *retryObjs) initRetryObjWithDelete(obj interface{}, key string, config interface{}) {
+func (r *RetryObjs) initRetryObjWithDelete(obj interface{}, key string, config interface{}) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -125,7 +159,7 @@ func (r *retryObjs) initRetryObjWithDelete(obj interface{}, key string, config i
 // addDeleteToRetryObj adds an old object that needs to be cleaned up to a retry object
 // includes the config object as well in case the namespace is removed and the object is orphaned from
 // the namespace
-func (r *retryObjs) addDeleteToRetryObj(obj interface{}, key string, config interface{}) {
+func (r *RetryObjs) addDeleteToRetryObj(obj interface{}, key string, config interface{}) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -135,7 +169,7 @@ func (r *retryObjs) addDeleteToRetryObj(obj interface{}, key string, config inte
 }
 
 // removeDeleteFromRetryObj removes any old object from a retry entry
-func (r *retryObjs) removeDeleteFromRetryObj(key string) {
+func (r *RetryObjs) removeDeleteFromRetryObj(key string) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -145,7 +179,7 @@ func (r *retryObjs) removeDeleteFromRetryObj(key string) {
 }
 
 // unSkipRetryObj ensures an obj is no longer ignored for retry loop
-func (r *retryObjs) unSkipRetryObj(key string) {
+func (r *RetryObjs) unSkipRetryObj(key string) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -154,7 +188,7 @@ func (r *retryObjs) unSkipRetryObj(key string) {
 }
 
 // deleteRetryObj deletes a specific entry from the map
-func (r *retryObjs) deleteRetryObj(key string, withLock bool) {
+func (r *RetryObjs) deleteRetryObj(key string, withLock bool) {
 	if withLock {
 		r.retryMutex.Lock()
 		defer r.retryMutex.Unlock()
@@ -163,7 +197,7 @@ func (r *retryObjs) deleteRetryObj(key string, withLock bool) {
 }
 
 // skipRetryObj sets a specific entry from the map to be ignored for subsequent retries
-func (r *retryObjs) skipRetryObj(key string) {
+func (r *RetryObjs) skipRetryObj(key string) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -172,7 +206,7 @@ func (r *retryObjs) skipRetryObj(key string) {
 }
 
 // checkRetryObj returns true if an entry with the given key exists, returns false otherwise.
-func (r *retryObjs) checkRetryObj(key string) bool {
+func (r *RetryObjs) checkRetryObj(key string) bool {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	_, ok := r.entries[key]
@@ -181,7 +215,7 @@ func (r *retryObjs) checkRetryObj(key string) bool {
 
 // requestRetryObjs allows a caller to immediately request to iterate through all objects that
 // are in the retry cache. This will ignore any outstanding time wait/backoff state
-func (r *retryObjs) requestRetryObjs() {
+func (r *RetryObjs) requestRetryObjs() {
 	select {
 	case r.retryChan <- struct{}{}:
 		klog.V(5).Infof("Iterate retry objects requested (resource %v)", r.oType)
@@ -191,7 +225,7 @@ func (r *retryObjs) requestRetryObjs() {
 }
 
 //getObjRetryEntry returns a copy of an object  retry entry from the cache
-func (r *retryObjs) getObjRetryEntry(key string) *retryObjEntry {
+func (r *RetryObjs) getObjRetryEntry(key string) *retryObjEntry {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	if entry, ok := r.entries[key]; ok {
@@ -236,7 +270,7 @@ func hasResourceAnUpdateFunc(objType reflect.Type) bool {
 // type considers them equal and therefore no update is needed. It returns false when the two objects are not considered
 // equal and an update needs be executed. This is regardless of how the update is carried out (whether with a dedicated update
 // function or with a delete on the old obj followed by an add on the new obj).
-func areResourcesEqual(objType reflect.Type, obj1, obj2 interface{}) (bool, error) {
+func areResourcesEqual(objType reflect.Type, obj1, obj2 interface{}, oc *ovnkmaster.Controller) (bool, error) {
 	// switch based on type
 	switch objType {
 	case factory.PolicyType:
@@ -261,7 +295,7 @@ func areResourcesEqual(objType reflect.Type, obj1, obj2 interface{}) (bool, erro
 		}
 
 		// when shouldUpdate is false, the hostsubnet is not assigned by ovn-kubernetes
-		shouldUpdate, err := shouldUpdate(node2, node1)
+		shouldUpdate, err := oc.ShouldUpdate(node2, node1)
 		if err != nil {
 			klog.Errorf(err.Error())
 		}
@@ -311,7 +345,7 @@ func getResourceKey(objType reflect.Type, obj interface{}) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
-		return getPolicyNamespacedName(np), nil
+		return getNamespacedName(np.Namespace, np.Name), nil
 
 	case factory.NodeType:
 		node, ok := obj.(*kapi.Node)
@@ -349,65 +383,65 @@ func getResourceKey(objType reflect.Type, obj interface{}) (string, error) {
 	return "", fmt.Errorf("object type %v not supported", objType)
 }
 
-func (oc *Controller) getPortInfo(pod *kapi.Pod) *lpInfo {
-	var portInfo *lpInfo
+func getPortInfo(pod *kapi.Pod, oc *ovnkmaster.Controller) *ovnkmaster.LpInfo {
+	var portInfo *ovnkmaster.LpInfo
 	key := util.GetLogicalPortName(pod.Namespace, pod.Name)
 	if !util.PodWantsNetwork(pod) {
 		// create dummy logicalPortInfo for host-networked pods
 		mac, _ := net.ParseMAC("00:00:00:00:00:00")
-		portInfo = &lpInfo{
-			logicalSwitch: "host-networked",
-			name:          key,
-			uuid:          "host-networked",
-			ips:           []*net.IPNet{},
-			mac:           mac,
+		portInfo = &ovnkmaster.LpInfo{
+			LogicalSwitch: "host-networked",
+			Name:          key,
+			Uuid:          "host-networked",
+			Ips:           []*net.IPNet{},
+			Mac:           mac,
 		}
 	} else {
-		portInfo, _ = oc.logicalPortCache.get(key)
+		portInfo, _ = oc.LogicalPortCache.Get(key)
 	}
 	return portInfo
 }
 
 // Given an object and its type, getInternalCacheEntry returns the internal cache entry for this object.
 // This is now used only for pods, which will get their the logical port cache entry.
-func (oc *Controller) getInternalCacheEntry(objType reflect.Type, obj interface{}) interface{} {
+func getInternalCacheEntry(objType reflect.Type, obj interface{}, oc *ovnkmaster.Controller) interface{} {
 	switch objType {
 	case factory.PodType:
 		pod := obj.(*kapi.Pod)
-		return oc.getPortInfo(pod)
+		return getPortInfo(pod, oc)
 	default:
 		return nil
 	}
 }
 
-// Given an object key and its type, getResourceFromInformerCache returns the latest state of the object
+// Given a watch factory, an object key and its type, GetResourceFromInformerCache returns the latest state of the object
 // from the informers cache.
-func (oc *Controller) getResourceFromInformerCache(objType reflect.Type, key string) (interface{}, error) {
+func getResourceFromInformerCache(wf *factory.WatchFactory, objType reflect.Type, key string) (interface{}, error) {
 	var obj interface{}
 	var err error
 
 	switch objType {
 	case factory.PolicyType:
 		namespace, name := splitNamespacedName(key)
-		obj, err = oc.watchFactory.GetNetworkPolicy(namespace, name)
+		obj, err = wf.GetNetworkPolicy(namespace, name)
 
 	case factory.NodeType:
-		obj, err = oc.watchFactory.GetNode(key)
+		obj, err = wf.GetNode(key)
 
 	case factory.PeerServiceType:
 		namespace, name := splitNamespacedName(key)
-		obj, err = oc.watchFactory.GetService(namespace, name)
+		obj, err = wf.GetService(namespace, name)
 
 	case factory.PodType,
 		factory.PeerPodSelectorType,
 		factory.PeerPodForNamespaceAndPodSelectorType,
 		factory.LocalPodSelectorType:
 		namespace, name := splitNamespacedName(key)
-		obj, err = oc.watchFactory.GetPod(namespace, name)
+		obj, err = wf.GetPod(namespace, name)
 
 	case factory.PeerNamespaceAndPodSelectorType,
 		factory.PeerNamespaceSelectorType:
-		obj, err = oc.watchFactory.GetNamespace(key)
+		obj, err = wf.GetNamespace(key)
 
 	default:
 		err = fmt.Errorf("object type %v not supported, cannot retrieve it from informers cache",
@@ -416,34 +450,43 @@ func (oc *Controller) getResourceFromInformerCache(objType reflect.Type, key str
 	return obj, err
 }
 
+// *** TODO ****
+// MetricsRecorder only appears in ovn-k master...
+// **************
 // Given an object and its type, recordAddEvent records the add event on this object. Only used for pods now.
-func (oc *Controller) recordAddEvent(objType reflect.Type, obj interface{}) {
+func recordAddEvent(objType reflect.Type, obj interface{}, oc *ovnkmaster.Controller) {
 	switch objType {
 	case factory.PodType:
 		klog.V(5).Infof("Recording add event on pod")
 		pod := obj.(*kapi.Pod)
-		oc.metricsRecorder.AddPod(pod.UID)
+		oc.MetricsRecorder.AddPod(pod.UID)
 	}
 }
 
+// *** TODO ****
+// MetricsRecorder only appears in ovn-k master...
+// **************
 // Given an object and its type, recordDeleteEvent records the delete event on this object. Only used for pods now.
-func (oc *Controller) recordDeleteEvent(objType reflect.Type, obj interface{}) {
+func recordDeleteEvent(objType reflect.Type, obj interface{}, oc *ovnkmaster.Controller) {
 	switch objType {
 	case factory.PodType:
 		klog.V(5).Infof("Recording add event on pod")
 		pod := obj.(*kapi.Pod)
-		oc.metricsRecorder.CleanPod(pod.UID)
+		oc.MetricsRecorder.CleanPod(pod.UID)
 	}
 }
 
+// *** TODO ****
+// MetricsRecorder only appears in ovn-k master...
+// **************
 // Given an object and its type, recordErrorEvent records an error event on this object. Only used for pods now.
-func (oc *Controller) recordErrorEvent(objType reflect.Type, obj interface{}, err error) {
+func recordErrorEvent(objType reflect.Type, obj interface{}, err error, oc *ovnkmaster.Controller) {
 	switch objType {
 	case factory.PodType:
 		klog.V(5).Infof("Recording error event on pod")
 		pod := obj.(*kapi.Pod)
-		oc.metricsRecorder.AddPod(pod.UID)
-		oc.recordPodEvent(err, pod)
+		oc.MetricsRecorder.AddPod(pod.UID)
+		oc.RecordPodEvent(err, pod)
 	}
 }
 
@@ -458,26 +501,26 @@ func isResourceScheduled(objType reflect.Type, obj interface{}) bool {
 	return true
 }
 
-// Given a *retryObjs instance, an object to add and a boolean specifying if the function was executed from
+// Given a *RetryObjs instance, an object to add and a boolean specifying if the function was executed from
 // iterateRetryResources, addResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fromRetryLoop bool) error {
+func (r *RetryObjs) addResource(obj interface{}, fromRetryLoop bool, oc *ovnkmaster.Controller) error {
 	var err error
 
-	switch objectsToRetry.oType {
+	switch r.oType {
 	case factory.PodType:
 		pod, ok := obj.(*kapi.Pod)
 		if !ok {
 			return fmt.Errorf("could not cast interface{} object to *knet.Pod")
 		}
-		return oc.ensurePod(nil, pod, true)
+		return oc.EnsurePod(nil, pod, true)
 
 	case factory.PolicyType:
 		np, ok := obj.(*knet.NetworkPolicy)
 		if !ok {
 			return fmt.Errorf("could not cast interface{} object to *knet.NetworkPolicy")
 		}
-		if err = oc.addNetworkPolicy(np); err != nil {
+		if err = oc.AddNetworkPolicy(np); err != nil {
 			klog.Infof("Network Policy retry delete failed for %s/%s, will try again later: %v",
 				np.Namespace, np.Name, err)
 			return err
@@ -488,22 +531,22 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 		if !ok {
 			return fmt.Errorf("could not cast interface{} object to *kapi.Node")
 		}
-		var nodeParams *nodeSyncs
+		var nodeParams *ovnkmaster.NodeSyncs
 		if fromRetryLoop {
-			_, nodeSync := oc.addNodeFailed.Load(node.Name)
-			_, clusterRtrSync := oc.nodeClusterRouterPortFailed.Load(node.Name)
-			_, mgmtSync := oc.mgmtPortFailed.Load(node.Name)
-			_, gwSync := oc.gatewaysFailed.Load(node.Name)
-			nodeParams = &nodeSyncs{
+			_, nodeSync := oc.AddNodeFailed.Load(node.Name)
+			_, clusterRtrSync := oc.NodeClusterRouterPortFailed.Load(node.Name)
+			_, mgmtSync := oc.MgmtPortFailed.Load(node.Name)
+			_, gwSync := oc.GatewaysFailed.Load(node.Name)
+			nodeParams = &ovnkmaster.NodeSyncs{
 				nodeSync,
 				clusterRtrSync,
 				mgmtSync,
 				gwSync}
 		} else {
-			nodeParams = &nodeSyncs{true, true, true, true}
+			nodeParams = &ovnkmaster.NodeSyncs{true, true, true, true}
 		}
 
-		if err = oc.addUpdateNodeEvent(node, nodeParams); err != nil {
+		if err = oc.AddUpdateNodeEvent(node, nodeParams); err != nil {
 			klog.Infof("Node retry delete failed for %s, will try again later: %v",
 				node.Name, err)
 			return err
@@ -514,15 +557,15 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 		if !ok {
 			return fmt.Errorf("could not cast peer service of type interface{} to *kapi.Service")
 		}
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerServiceAdd(extraParameters.gp, service)
 
 	case factory.PeerPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, obj)
 
 	case factory.PeerNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		namespace := obj.(*kapi.Namespace)
 		extraParameters.np.RLock()
 		alreadyDeleted := extraParameters.np.deleted
@@ -537,7 +580,7 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 			namespace.Name,
 			extraParameters.podSelector,
 			nil,
-			&NetworkPolicyExtraParameters{gp: extraParameters.gp},
+			&ovnkmaster.NetworkPolicyExtraParameters{gp: extraParameters.gp},
 		)
 		// The AddFilteredPodHandler call might call handlePeerPodSelectorAddUpdate
 		// on existing pods so we can't be holding the lock at this point
@@ -546,17 +589,17 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 		extraParameters.np.Lock()
 		defer extraParameters.np.Unlock()
 		if extraParameters.np.deleted {
-			oc.watchFactory.RemovePodHandler(podHandler)
+			oc.WatchFactory.RemovePodHandler(podHandler)
 			return nil
 		}
 		extraParameters.np.podHandlerList = append(extraParameters.np.podHandlerList, podHandler)
 
 	case factory.PeerPodForNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, obj)
 
 	case factory.PeerNamespaceSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		namespace := obj.(*kapi.Namespace)
 		// Update the ACL ...
 		return oc.handlePeerNamespaceSelectorOnUpdate(extraParameters.np, extraParameters.gp, func() bool {
@@ -565,7 +608,7 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 		})
 
 	case factory.LocalPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handleLocalPodSelectorAddFunc(
 			extraParameters.policy,
 			extraParameters.np,
@@ -574,24 +617,24 @@ func (oc *Controller) addResource(objectsToRetry *retryObjs, obj interface{}, fr
 			obj)
 
 	default:
-		return fmt.Errorf("no add function for object type %v", objectsToRetry.oType)
+		return fmt.Errorf("no add function for object type %v", r.oType)
 	}
 
 	return nil
 }
 
-// Given a *retryObjs instance, an old and a new object, updateResource updates the specified object in the cluster
+// Given a *RetryObjs instance, an old and a new object, updateResource updates the specified object in the cluster
 // to its version in newObj according to its type and returns the error, if any, yielded during the object update.
-func (oc *Controller) updateResource(objectsToRetry *retryObjs, oldObj, newObj interface{}) error {
-	switch objectsToRetry.oType {
+func (r *RetryObjs) updateResource(oldObj, newObj interface{}, oc *ovnkmaster.Controller) error {
+	switch r.oType {
 	case factory.PodType:
 		oldPod := oldObj.(*kapi.Pod)
 		newPod := newObj.(*kapi.Pod)
-		newKey, err := getResourceKey(objectsToRetry.oType, newObj)
+		newKey, err := getResourceKey(r.oType, newObj)
 		if err != nil {
 			return err
 		}
-		return oc.ensurePod(oldPod, newPod, objectsToRetry.checkRetryObj(newKey))
+		return oc.ensurePod(oldPod, newPod, r.checkRetryObj(newKey))
 
 	case factory.NodeType:
 		newNode, ok := newObj.(*kapi.Node)
@@ -603,27 +646,27 @@ func (oc *Controller) updateResource(objectsToRetry *retryObjs, oldObj, newObj i
 			return fmt.Errorf("could not cast oldObj of type interface{} to *kapi.Node")
 		}
 		// determine what actually changed in this update
-		_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
-		_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
+		_, nodeSync := oc.AddNodeFailed.Load(newNode.Name)
+		_, failed := oc.NodeClusterRouterPortFailed.Load(newNode.Name)
 		clusterRtrSync := failed || nodeChassisChanged(oldNode, newNode) || nodeSubnetChanged(oldNode, newNode)
-		_, failed = oc.mgmtPortFailed.Load(newNode.Name)
+		_, failed = oc.MgmtPortFailed.Load(newNode.Name)
 		mgmtSync := failed || macAddressChanged(oldNode, newNode) || nodeSubnetChanged(oldNode, newNode)
-		_, failed = oc.gatewaysFailed.Load(newNode.Name)
+		_, failed = oc.GatewaysFailed.Load(newNode.Name)
 		gwSync := (failed || gatewayChanged(oldNode, newNode) ||
 			nodeSubnetChanged(oldNode, newNode) || hostAddressesChanged(oldNode, newNode))
 
-		return oc.addUpdateNodeEvent(newNode, &nodeSyncs{nodeSync, clusterRtrSync, mgmtSync, gwSync})
+		return oc.AddUpdateNodeEvent(newNode, &ovnkmaster.NodeSyncs{nodeSync, clusterRtrSync, mgmtSync, gwSync})
 
 	case factory.PeerPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, newObj)
 
 	case factory.PeerPodForNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, newObj)
 
 	case factory.LocalPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handleLocalPodSelectorAddFunc(
 			extraParameters.policy,
 			extraParameters.np,
@@ -632,21 +675,21 @@ func (oc *Controller) updateResource(objectsToRetry *retryObjs, oldObj, newObj i
 			newObj)
 	}
 
-	return fmt.Errorf("no update function for object type %v", objectsToRetry.oType)
+	return fmt.Errorf("no update function for object type %v", r.oType)
 }
 
-// Given a *retryObjs instance, an object and optionally a cachedObj, deleteResource deletes the object from the cluster
+// Given a *RetryObjs instance, an object and optionally a cachedObj, deleteResource deletes the object from the cluster
 // according to the delete logic of its resource type. cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
-func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj interface{}) error {
-	switch objectsToRetry.oType {
+func (r *RetryObjs) deleteResource(obj, cachedObj interface{}, oc *ovnkmaster.Controller) error {
+	switch r.oType {
 	case factory.PodType:
-		var portInfo *lpInfo
+		var portInfo *ovnkmaster.LpInfo
 		pod := obj.(*kapi.Pod)
 		if cachedObj != nil {
-			portInfo = cachedObj.(*lpInfo)
+			portInfo = cachedObj.(*ovnkmaster.LpInfo)
 		}
-		oc.logicalPortCache.remove(util.GetLogicalPortName(pod.Namespace, pod.Name))
+		oc.LogicalPortCache.remove(util.GetLogicalPortName(pod.Namespace, pod.Name))
 		return oc.removePod(pod, portInfo)
 
 	case factory.PolicyType:
@@ -674,20 +717,20 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 		if !ok {
 			return fmt.Errorf("could not cast peer service of type interface{} to *kapi.Service")
 		}
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerServiceDelete(extraParameters.gp, service)
 
 	case factory.PeerPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorDelete(extraParameters.gp, obj)
 
 	case factory.PeerNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		// when the namespace labels no longer apply
 		// remove the namespaces pods from the address_set
 		var errs []error
 		namespace := obj.(*kapi.Namespace)
-		pods, _ := oc.watchFactory.GetPods(namespace.Name)
+		pods, _ := oc.WatchFactory.GetPods(namespace.Name)
 
 		for _, pod := range pods {
 			if err := oc.handlePeerPodSelectorDelete(extraParameters.gp, pod); err != nil {
@@ -697,11 +740,11 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 		return kerrorsutil.NewAggregate(errs)
 
 	case factory.PeerPodForNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handlePeerPodSelectorDelete(extraParameters.gp, obj)
 
 	case factory.PeerNamespaceSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		namespace := obj.(*kapi.Namespace)
 		// Remove namespace address set from the *gress policy in cache
 		// (done in gress.delNamespaceAddressSet()), and then update ACLs
@@ -711,7 +754,7 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 		})
 
 	case factory.PeerPodForNamespaceAndPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handleLocalPodSelectorDelFunc(
 			extraParameters.policy,
 			extraParameters.np,
@@ -720,7 +763,7 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 			obj)
 
 	case factory.LocalPodSelectorType:
-		extraParameters := objectsToRetry.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		return oc.handleLocalPodSelectorDelFunc(
 			extraParameters.policy,
 			extraParameters.np,
@@ -729,13 +772,13 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 			obj)
 
 	default:
-		return fmt.Errorf("object type %v not supported", objectsToRetry.oType)
+		return fmt.Errorf("object type %v not supported", r.oType)
 	}
 }
 
 // iterateRetryResources checks if any outstanding resource objects exist and if so it tries to
 // re-add them. updateAll forces all objects to be attempted to be retried regardless.
-func (oc *Controller) iterateRetryResources(r *retryObjs, updateAll bool) {
+func (r *RetryObjs) iterateRetryResources(updateAll bool, oc *ovnkmaster.Controller) {
 	r.retryMutex.Lock()
 	defer r.retryMutex.Unlock()
 	now := time.Now()
@@ -747,7 +790,7 @@ func (oc *Controller) iterateRetryResources(r *retryObjs, updateAll bool) {
 		if entry.newObj != nil {
 			// get the latest version of the resource object from the informer;
 			// if it doesn't exist we are not going to create the new object.
-			obj, err := oc.getResourceFromInformerCache(r.oType, objKey)
+			obj, err := getResourceFromInformerCache(oc.WatchFactory, r.oType, objKey)
 			if err != nil {
 				if kerrors.IsNotFound(err) {
 					klog.Infof("%v %s not found in the informers cache,"+
@@ -783,7 +826,7 @@ func (oc *Controller) iterateRetryResources(r *retryObjs, updateAll bool) {
 				klog.V(5).Infof("Retry: %s %s not scheduled", r.oType, objKey)
 				continue
 			}
-			if err := oc.deleteResource(r, entry.oldObj, entry.config); err != nil {
+			if err := r.deleteResource(entry.oldObj, entry.config, oc); err != nil {
 				klog.Infof("%v retry delete failed for %s, will try again later: %v", r.oType, objKey, err)
 				entry.timeStamp = time.Now()
 				continue
@@ -799,7 +842,7 @@ func (oc *Controller) iterateRetryResources(r *retryObjs, updateAll bool) {
 				klog.V(5).Infof("Retry: %s %s not scheduled", r.oType, objKey)
 				continue
 			}
-			if err := oc.addResource(r, entry.newObj, true); err != nil {
+			if err := r.addResource(entry.newObj, true, oc); err != nil {
 				klog.Infof("%v retry create failed for %s, will try again later: %v", r.oType, objKey, err)
 				entry.timeStamp = time.Now()
 				continue
@@ -814,29 +857,29 @@ func (oc *Controller) iterateRetryResources(r *retryObjs, updateAll bool) {
 	}
 }
 
-// periodicallyRetryResources tracks retryObjs and checks if any object needs to be retried for add or delete every
+// periodicallyRetryResources tracks RetryObjs and checks if any object needs to be retried for add or delete every
 // retryObjInterval seconds or when requested through retryChan.
-func (oc *Controller) periodicallyRetryResources(r *retryObjs) {
+func (r *RetryObjs) periodicallyRetryResources(oc *ovnkmaster.Controller) {
 	for {
 		select {
 		case <-time.After(retryObjInterval):
 			klog.V(5).Infof("%s s have elapsed, retrying failed objects of type %v", retryObjInterval, r.oType)
-			oc.iterateRetryResources(r, false)
+			r.iterateRetryResources(false, oc)
 
 		case <-r.retryChan:
 			klog.V(5).Infof("Retry channel got triggered: retrying failed objects of type %v", r.oType)
-			oc.iterateRetryResources(r, true)
+			r.iterateRetryResources(true, oc)
 
-		case <-oc.stopChan:
+		case <-oc.stopChan: // TODO Here you need the stop channel in ovnNode!!!! Will you need a copy of this function???
 			klog.V(5).Infof("Stop channel got triggered: will stop retrying failed objects of type %v", r.oType)
 			return
 		}
 	}
 }
 
-// Given a *retryObjs instance, getSyncResourcesFunc retuns the sync function for a given resource type.
+// Given a *RetryObjs instance, getSyncResourcesFunc retuns the sync function for a given resource type.
 // This will be then called on all existing objects when a watcher is started.
-func (oc *Controller) getSyncResourcesFunc(r *retryObjs) (func([]interface{}), error) {
+func (r *RetryObjs) getSyncResourcesFunc(oc *ovnkmaster.Controller) (func([]interface{}), error) {
 
 	var syncRetriableFunc func([]interface{}) error
 	var syncFunc func([]interface{})
@@ -848,15 +891,15 @@ func (oc *Controller) getSyncResourcesFunc(r *retryObjs) (func([]interface{}), e
 	switch r.oType {
 	case factory.PodType:
 		name = "SyncPods"
-		syncRetriableFunc = oc.syncPodsRetriable
+		syncRetriableFunc = oc.SyncPodsRetriable
 
 	case factory.PolicyType:
 		name = "syncNetworkPolicies"
-		syncRetriableFunc = oc.syncNetworkPolicies
+		syncRetriableFunc = oc.SyncNetworkPolicies
 
 	case factory.NodeType:
 		name = "syncNodes"
-		syncRetriableFunc = oc.syncNodesRetriable
+		syncRetriableFunc = oc.SyncNodesRetriable
 
 	case factory.PeerServiceType,
 		factory.PeerNamespaceAndPodSelectorType:
@@ -865,21 +908,21 @@ func (oc *Controller) getSyncResourcesFunc(r *retryObjs) (func([]interface{}), e
 
 	case factory.PeerPodSelectorType:
 		name = "PeerPodSelector"
-		extraParameters := r.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		syncRetriableFunc = func(objs []interface{}) error {
 			return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, objs...)
 		}
 
 	case factory.PeerPodForNamespaceAndPodSelectorType:
 		name = "PeerPodForNamespaceAndPodSelector"
-		extraParameters := r.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		syncRetriableFunc = func(objs []interface{}) error {
 			return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, objs...)
 		}
 
 	case factory.PeerNamespaceSelectorType:
 		name = "PeerNamespaceSelector"
-		extraParameters := r.extraParameters.(*NetworkPolicyExtraParameters)
+		extraParameters := r.extraParameters.(*ovnkmaster.NetworkPolicyExtraParameters)
 		// the function below will never fail, so there's no point in making it retriable...
 		syncFunc = func(i []interface{}) {
 			// This needs to be a write lock because there's no locking around 'gress policies
@@ -914,7 +957,7 @@ func (oc *Controller) getSyncResourcesFunc(r *retryObjs) (func([]interface{}), e
 
 // Given an object and its type, isObjectInTerminalState returns true if the object is a in terminal state.
 // This is used now for pods that are either in a PodSucceeded or in a PodFailed state.
-func (oc *Controller) isObjectInTerminalState(objType reflect.Type, obj interface{}) bool {
+func isObjectInTerminalState(objType reflect.Type, obj interface{}) bool {
 	switch objType {
 	case factory.PodType,
 		factory.PeerPodSelectorType,
@@ -938,27 +981,43 @@ var (
 // processObjectInTerminalState is executed when an object has been added or updated and is actually in a terminal state
 // already. The add or update event is not valid for such object, which we now remove from the cluster in order to
 // free its resources. (for now, this applies to completed pods)
-func (oc *Controller) processObjectInTerminalState(objectsToRetry *retryObjs, obj interface{}, key string, event resourceEvent) {
+func (r *RetryObjs) processObjectInTerminalState(obj interface{}, key string, event resourceEvent, oc *ovnkmaster.Controller) {
 	// The object is in a terminal state: delete it from the cluster, delete its retry entry and return.
 	klog.Infof("Detected object %s of type %v in terminal state (e.g. completed)"+
-		" during %s event: will remove it", key, objectsToRetry.oType, event)
+		" during %s event: will remove it", key, r.oType, event)
 
-	internalCacheEntry := oc.getInternalCacheEntry(objectsToRetry.oType, obj)
-	objectsToRetry.initRetryObjWithDelete(obj, key, internalCacheEntry) // set up the retry obj for deletion
-	if retryEntry := objectsToRetry.getObjRetryEntry(key); retryEntry != nil {
-		// retryEntry shouldn't be nil since we've just added the obj to objectsToRetry
+	internalCacheEntry := getInternalCacheEntry(r.oType, obj, oc)
+	r.initRetryObjWithDelete(obj, key, internalCacheEntry) // set up the retry obj for deletion
+	if retryEntry := r.getObjRetryEntry(key); retryEntry != nil {
+		// retryEntry shouldn't be nil since we've just added the obj to r
 		retryEntry.newObj = nil // will not be retried for addition
 	}
 
-	if err := oc.deleteResource(objectsToRetry, obj, internalCacheEntry); err != nil {
+	if err := r.deleteResource(obj, internalCacheEntry, oc); err != nil {
 		klog.Errorf("Failed to delete object %s of type %v in terminal state, during %s event: %v",
-			key, objectsToRetry.oType, event, err)
-		oc.recordErrorEvent(objectsToRetry.oType, obj, err)
-		objectsToRetry.unSkipRetryObj(key)
+			key, r.oType, event, err)
+		recordErrorEvent(r.oType, obj, err, oc)
+		r.unSkipRetryObj(key)
 		return
 	}
-	objectsToRetry.removeDeleteFromRetryObj(key)
-	objectsToRetry.deleteRetryObj(key, true)
+	r.removeDeleteFromRetryObj(key)
+	r.deleteRetryObj(key, true)
+}
+
+// func (oc *ovnkmaster.Controller) WatchResource(objectsToRetry *RetryObjs) *factory.Handler {
+// 	return objectsToRetry.watchResource(oc, nil)
+// }
+
+// func (n *ovnknode.OvnNode) WatchResource(objectsToRetry *RetryObjs) *factory.Handler {
+// 	return objectsToRetry.watchResource(nil, n)
+// }
+
+func (objectsToRetry *RetryObjs) WatchOVNMasterResource(oc *ovnkmaster.Controller) *factory.Handler {
+	return objectsToRetry.watchResource(oc, nil)
+}
+
+func (objectsToRetry *RetryObjs) WatchOVNNodeResource(n *ovnknode.OvnNode) *factory.Handler {
+	return objectsToRetry.watchResource(nil, n)
 }
 
 // WatchResource starts the watching of a resource type, manages its retry entries and calls
@@ -966,18 +1025,20 @@ func (oc *Controller) processObjectInTerminalState(objectsToRetry *retryObjs, ob
 // periodically or when explicitly requested.
 // Note: when applying WatchResource to a new resource type, the appropriate resource-specific logic must be added to the
 // the different methods it calls.
-func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler {
+func (objectsToRetry *RetryObjs) watchResource(oc *ovnkmaster.Controller, n *ovnknode.OvnNode) *factory.Handler {
+	// Needs: wf, oc
+	//
 	// track the retry entries and every 30 seconds (or upon explicit request) check if any objects
 	// need to be retried
-	go oc.periodicallyRetryResources(objectsToRetry)
+	go objectsToRetry.periodicallyRetryResources(oc)
 
-	addHandlerFunc, err := oc.watchFactory.GetResourceHandlerFunc(objectsToRetry.oType)
+	addHandlerFunc, err := oc.WatchFactory.GetResourceHandlerFunc(objectsToRetry.oType)
 	if err != nil {
 		klog.Errorf("No resource handler function found for resource %v. "+
 			"Cannot watch this resource.", objectsToRetry.oType)
 		return nil
 	}
-	syncFunc, err := oc.getSyncResourcesFunc(objectsToRetry)
+	syncFunc, err := objectsToRetry.getSyncResourcesFunc(oc)
 	if err != nil {
 		klog.Errorf("No sync function found for resource %v. "+
 			"Cannot watch this resource.", objectsToRetry.oType)
@@ -990,7 +1051,7 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 		objectsToRetry.labelSelectorForFilteredHandler, // filter out objects not matching these labels
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				oc.recordAddEvent(objectsToRetry.oType, obj)
+				recordAddEvent(objectsToRetry.oType, obj, oc)
 
 				key, err := getResourceKey(objectsToRetry.oType, obj)
 				if err != nil {
@@ -1004,8 +1065,8 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 
 				// This only applies to pod watchers (pods + dynamic network policy handlers watching pods):
 				// if ovnkube-master is restarted, it will gets all the add events with completed pods
-				if oc.isObjectInTerminalState(objectsToRetry.oType, obj) {
-					oc.processObjectInTerminalState(objectsToRetry, obj, key, resourceEventAdd)
+				if isObjectInTerminalState(objectsToRetry.oType, obj) {
+					objectsToRetry.processObjectInTerminalState(obj, key, resourceEventAdd, oc)
 					return
 				}
 
@@ -1016,21 +1077,21 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 					klog.Infof("Detected stale object during new object"+
 						" add of type %v with the same key: %s",
 						objectsToRetry.oType, key)
-					internalCacheEntry := oc.getInternalCacheEntry(objectsToRetry.oType, obj)
-					if err := oc.deleteResource(objectsToRetry, obj, internalCacheEntry); err != nil {
+					internalCacheEntry := getInternalCacheEntry(objectsToRetry.oType, obj, oc)
+					if err := objectsToRetry.deleteResource(obj, internalCacheEntry, oc); err != nil {
 						klog.Errorf("Failed to delete old object %s of type %v,"+
 							" during add event: %v", key, objectsToRetry.oType, err)
-						oc.recordErrorEvent(objectsToRetry.oType, obj, err)
+						recordErrorEvent(objectsToRetry.oType, obj, err, oc)
 						objectsToRetry.unSkipRetryObj(key)
 						return
 					}
 					objectsToRetry.removeDeleteFromRetryObj(key)
 				}
 				start := time.Now()
-				if err := oc.addResource(objectsToRetry, obj, false); err != nil {
+				if err := objectsToRetry.addResource(obj, false, oc); err != nil {
 					klog.Errorf("Failed to create %v object %s, error: %v",
 						objectsToRetry.oType, key, err)
-					oc.recordErrorEvent(objectsToRetry.oType, obj, err)
+					recordErrorEvent(objectsToRetry.oType, obj, err, oc)
 					objectsToRetry.unSkipRetryObj(key)
 					return
 				}
@@ -1067,7 +1128,7 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 				}
 
 				// skip the whole update if the new object doesn't exist anymore in the API server
-				newer, err = oc.getResourceFromInformerCache(objectsToRetry.oType, newKey)
+				newer, err = getResourceFromInformerCache(oc.WatchFactory, objectsToRetry.oType, newKey)
 				if err != nil {
 					klog.Warningf("Unable to get %v %s from informer cache (perhaps it was already"+
 						" deleted?), skipping update: %v", objectsToRetry.oType, newKey, err)
@@ -1075,7 +1136,7 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 				}
 
 				klog.Infof("Update event received for resource %v, oldKey=%s, newKey=%s",
-					objectsToRetry.oType, oldKey, newKey)
+					objectsToRetry.oType, oldKey, newKey) //
 
 				objectsToRetry.skipRetryObj(newKey)
 				hasUpdateFunc := hasResourceAnUpdateFunc(objectsToRetry.oType)
@@ -1090,10 +1151,10 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 					// [step 1a] there is a retry entry marked for deletion
 					klog.Infof("Found old retry object for %v %s: will delete it",
 						objectsToRetry.oType, oldKey)
-					if err := oc.deleteResource(objectsToRetry, retryEntry.oldObj,
-						retryEntry.config); err != nil {
+					if err := objectsToRetry.deleteResource(retryEntry.oldObj,
+						retryEntry.config, oc); err != nil {
 						klog.Errorf("Failed to delete stale object %s, during update: %v", oldKey, err)
-						oc.recordErrorEvent(objectsToRetry.oType, retryEntry.oldObj, err)
+						recordErrorEvent(objectsToRetry.oType, retryEntry.oldObj, err, oc)
 						objectsToRetry.initRetryObjWithAdd(newer, newKey)
 						objectsToRetry.unSkipRetryObj(oldKey)
 						return
@@ -1101,11 +1162,11 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 					// remove the old object from retry entry since it was correctly deleted
 					objectsToRetry.removeDeleteFromRetryObj(oldKey)
 
-				} else if oc.isObjectInTerminalState(objectsToRetry.oType, newer) { // check the latest status on newer
+				} else if isObjectInTerminalState(objectsToRetry.oType, newer) { // check the latest status on newer
 					// [step 1b] The object is in a terminal state: delete it from the cluster,
 					// delete its retry entry and return. This only applies to pod watchers
 					// (pods + dynamic network policy handlers watching pods).
-					oc.processObjectInTerminalState(objectsToRetry, old, oldKey, resourceEventUpdate)
+					objectsToRetry.processObjectInTerminalState(old, oldKey, resourceEventUpdate, oc)
 					return
 
 				} else if !hasUpdateFunc {
@@ -1116,10 +1177,10 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 						existingCacheEntry = retryEntry.config
 					}
 					klog.Infof("Deleting old %s of type %s during update", oldKey, objectsToRetry.oType)
-					if err := oc.deleteResource(objectsToRetry, old, existingCacheEntry); err != nil {
+					if err := objectsToRetry.deleteResource(old, existingCacheEntry, oc); err != nil {
 						klog.Errorf("Failed to delete %s %s, during update: %v",
 							objectsToRetry.oType, oldKey, err)
-						oc.recordErrorEvent(objectsToRetry.oType, old, err)
+						recordErrorEvent(objectsToRetry.oType, old, err, oc)
 						objectsToRetry.initRetryObjWithDelete(old, oldKey, nil)
 						objectsToRetry.initRetryObjWithAdd(newer, newKey)
 						objectsToRetry.unSkipRetryObj(oldKey)
@@ -1135,18 +1196,18 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 				if hasUpdateFunc {
 					klog.Infof("Updating %s %s", objectsToRetry.oType, newKey)
 					// if this resource type has an update func, just call the update function
-					if err := oc.updateResource(objectsToRetry, old, newer); err != nil {
+					if err := objectsToRetry.updateResource(old, newer, oc); err != nil {
 						klog.Errorf("Failed to update resource %v, old=%s, new=%s, error: %v",
 							objectsToRetry.oType, oldKey, newKey, err)
-						oc.recordErrorEvent(objectsToRetry.oType, newer, err)
+						recordErrorEvent(objectsToRetry.oType, newer, err, oc)
 						objectsToRetry.initRetryObjWithAdd(newer, newKey)
 						objectsToRetry.unSkipRetryObj(newKey)
 						return
 					}
 				} else { // we previously deleted old object, now let's add the new one
 					klog.Infof("Adding new %s of type %s", newKey, objectsToRetry.oType)
-					if err := oc.addResource(objectsToRetry, newer, false); err != nil {
-						oc.recordErrorEvent(objectsToRetry.oType, newer, err)
+					if err := objectsToRetry.addResource(newer, false, oc); err != nil {
+						recordErrorEvent(objectsToRetry.oType, newer, err, oc)
 						objectsToRetry.initRetryObjWithAdd(newer, newKey)
 						objectsToRetry.unSkipRetryObj(newKey)
 						klog.Errorf("Failed to add %s %s, during update: %v",
@@ -1159,7 +1220,7 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 
 			},
 			DeleteFunc: func(obj interface{}) {
-				oc.recordDeleteEvent(objectsToRetry.oType, obj)
+				recordDeleteEvent(objectsToRetry.oType, obj, oc)
 				key, err := getResourceKey(objectsToRetry.oType, obj)
 				if err != nil {
 					klog.Errorf("Delete of resource %v failed: %v", objectsToRetry.oType, err)
@@ -1167,9 +1228,9 @@ func (oc *Controller) WatchResource(objectsToRetry *retryObjs) *factory.Handler 
 				}
 				klog.Infof("Delete event received for resource %v %s", objectsToRetry.oType, key)
 				objectsToRetry.skipRetryObj(key)
-				internalCacheEntry := oc.getInternalCacheEntry(objectsToRetry.oType, obj)
+				internalCacheEntry := getInternalCacheEntry(objectsToRetry.oType, obj, oc)
 				objectsToRetry.initRetryObjWithDelete(obj, key, internalCacheEntry) // set up the retry obj for deletion
-				if err := oc.deleteResource(objectsToRetry, obj, internalCacheEntry); err != nil {
+				if err := objectsToRetry.deleteResource(obj, internalCacheEntry, oc); err != nil {
 					objectsToRetry.unSkipRetryObj(key)
 					klog.Errorf("Failed to delete resource object %s of type %v, error: %v",
 						key, objectsToRetry.oType, err)

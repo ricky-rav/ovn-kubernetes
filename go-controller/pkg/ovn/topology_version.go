@@ -67,7 +67,7 @@ func (oc *Controller) reportTopologyVersion(ctx context.Context) error {
 // Remove the old topology annotation from nodes, if it exists.
 func (oc *Controller) cleanTopologyAnnotation() error {
 	// Unset the old topology annotation on all Node objects
-	nodes, err := oc.watchFactory.GetNodes()
+	nodes, err := oc.WatchFactory.GetNodes()
 	if err != nil {
 		return err
 	}

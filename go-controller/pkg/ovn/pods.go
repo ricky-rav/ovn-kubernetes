@@ -21,7 +21,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
-func (oc *Controller) syncPodsRetriable(pods []interface{}) error {
+func (oc *Controller) SyncPodsRetriable(pods []interface{}) error {
 	// get the list of logical switch ports (equivalent to pods)
 	expectedLogicalPorts := make(map[string]bool)
 	for _, podInterface := range pods {
@@ -57,7 +57,7 @@ func (oc *Controller) syncPodsRetriable(pods []interface{}) error {
 	}
 
 	// get all the nodes from the watchFactory
-	nodes, err := oc.watchFactory.GetNodes()
+	nodes, err := oc.WatchFactory.GetNodes()
 	if err != nil {
 		return fmt.Errorf("failed to get nodes: %v", err)
 	}
@@ -90,7 +90,7 @@ func (oc *Controller) syncPodsRetriable(pods []interface{}) error {
 	return nil
 }
 
-func (oc *Controller) deleteLogicalPort(pod *kapi.Pod, portInfo *lpInfo) (err error) {
+func (oc *Controller) deleteLogicalPort(pod *kapi.Pod, portInfo *LpInfo) (err error) {
 	podDesc := pod.Namespace + "/" + pod.Name
 	klog.Infof("Deleting pod: %s", podDesc)
 
@@ -116,8 +116,8 @@ func (oc *Controller) deleteLogicalPort(pod *kapi.Pod, portInfo *lpInfo) (err er
 		}
 		podIfAddrs = annotation.IPs
 	} else {
-		portUUID = portInfo.uuid
-		podIfAddrs = portInfo.ips
+		portUUID = portInfo.Uuid
+		podIfAddrs = portInfo.Ips
 	}
 
 	var allOps, ops []ovsdb.Operation
@@ -470,7 +470,7 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	} else if config.Gateway.DisableSNATMultipleGWs {
 		// Add NAT rules to pods if disable SNAT is set and does not have
 		// namespace annotations to go through external egress router
-		if extIPs, err := getExternalIPsGRSNAT(oc.watchFactory, pod.Spec.NodeName); err != nil {
+		if extIPs, err := getExternalIPsGRSNAT(oc.WatchFactory, pod.Spec.NodeName); err != nil {
 			return err
 		} else if err = addOrUpdatePerPodGRSNAT(oc.nbClient, pod.Spec.NodeName, extIPs, podIfAddrs); err != nil {
 			return err
@@ -509,7 +509,7 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	if err != nil {
 		return fmt.Errorf("error transacting operations %+v: %v", ops, err)
 	}
-	oc.metricsRecorder.AddLSP(pod.UID)
+	oc.MetricsRecorder.AddLSP(pod.UID)
 
 	// if somehow lspUUID is empty, there is a bug here with interpreting OVSDB results
 	if len(lsp.UUID) == 0 {
@@ -517,12 +517,12 @@ func (oc *Controller) addLogicalPort(pod *kapi.Pod) (err error) {
 	}
 
 	// Add the pod's logical switch port to the port cache
-	portInfo := oc.logicalPortCache.add(logicalSwitch, portName, lsp.UUID, podMac, podIfAddrs)
+	portInfo := oc.LogicalPortCache.add(logicalSwitch, portName, lsp.UUID, podMac, podIfAddrs)
 
 	// If multicast is allowed and enabled for the namespace, add the port to the allow policy.
 	// FIXME: there's a race here with the Namespace multicastUpdateNamespace() handler, but
 	// it's rare and easily worked around for now.
-	ns, err := oc.watchFactory.GetNamespace(pod.Namespace)
+	ns, err := oc.WatchFactory.GetNamespace(pod.Namespace)
 	if err != nil {
 		return err
 	}

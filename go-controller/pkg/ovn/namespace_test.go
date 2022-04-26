@@ -111,7 +111,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			)
 			podMAC := ovntest.MustParseMAC(tP.podMAC)
 			podIPNets := []*net.IPNet{ovntest.MustParseIPNet(tP.podIP + "/24")}
-			fakeOvn.controller.logicalPortCache.add(tP.nodeName, tP.portName, fakeUUID, podMAC, podIPNets)
+			fakeOvn.controller.LogicalPortCache.add(tP.nodeName, tP.portName, fakeUUID, podMAC, podIPNets)
 			fakeOvn.controller.WatchNamespaces()
 
 			_, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceT.Name, metav1.GetOptions{})

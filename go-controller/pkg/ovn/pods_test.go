@@ -447,8 +447,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// port should be gone or marked for removal in logical port cache
 				logicalPort := util.GetLogicalPortName(myPod.Namespace, myPod.Name)
 				gomega.Eventually(func() bool {
-					info, err := fakeOvn.controller.logicalPortCache.get(logicalPort)
-					return err != nil || !info.expires.IsZero()
+					info, err := fakeOvn.controller.LogicalPortCache.Get(logicalPort)
+					return err != nil || !info.Expires.IsZero()
 				}, 2).Should(gomega.BeTrue())
 
 				// there should also be no entry for this pod in the retry cache
@@ -508,7 +508,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Namespace: namespaceT.Name,
 					},
 				}
-				err := fakeOvn.controller.ensurePod(nil, podObj, true) // this fails since pod doesn't exist to set annotations
+				err := fakeOvn.controller.EnsurePod(nil, podObj, true) // this fails since pod doesn't exist to set annotations
 				gomega.Expect(err).To(gomega.HaveOccurred())
 
 				key, err := getResourceKey(factory.PodType, podObj)

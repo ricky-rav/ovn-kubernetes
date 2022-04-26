@@ -222,7 +222,7 @@ func (oc *Controller) StartClusterMaster() error {
 	metrics.RegisterMasterFunctional()
 	metrics.RunTimestamp(oc.stopChan, oc.sbClient, oc.nbClient)
 	metrics.MonitorIPSec(oc.nbClient)
-	oc.metricsRecorder.Run(oc.sbClient, oc.stopChan)
+	oc.MetricsRecorder.Run(oc.sbClient, oc.stopChan)
 
 	// enableOVNLogicalDataPathGroups sets an OVN flag to enable logical datapath
 	// groups on OVN 20.12 and later. The option is ignored if OVN doesn't
@@ -306,9 +306,9 @@ func (oc *Controller) StartClusterMaster() error {
 	if config.HybridOverlay.Enabled {
 		oc.hoMaster, err = hocontroller.NewMaster(
 			oc.kube,
-			oc.watchFactory.NodeInformer(),
-			oc.watchFactory.NamespaceInformer(),
-			oc.watchFactory.PodInformer(),
+			oc.WatchFactory.NodeInformer(),
+			oc.WatchFactory.NamespaceInformer(),
+			oc.WatchFactory.PodInformer(),
 			oc.nbClient,
 			oc.sbClient,
 			informer.NewDefaultEventHandler,
@@ -1171,7 +1171,7 @@ func (oc *Controller) syncWithRetry(syncName string, syncFunc func() error) {
 // watchNodes() will be called for all existing nodes at startup anyway.
 // Note that this list will include the 'join' cluster switch, which we
 // do not want to delete.
-func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
+func (oc *Controller) SyncNodesRetriable(nodes []interface{}) error {
 	foundNodes := sets.NewString()
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
@@ -1275,14 +1275,14 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 
 // nodeSyncs structure contains flags for the different failures
 // so the retry logic can control what need to retry based
-type nodeSyncs struct {
-	syncNode              bool
-	syncClusterRouterPort bool
-	syncMgmtPort          bool
-	syncGw                bool
+type NodeSyncs struct {
+	SyncNode              bool
+	SyncClusterRouterPort bool
+	SyncMgmtPort          bool
+	SyncGw                bool
 }
 
-func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) error {
+func (oc *Controller) AddUpdateNodeEvent(node *kapi.Node, nSyncs *NodeSyncs) error {
 	var hostSubnets []*net.IPNet
 	var errs []error
 	var err error
@@ -1296,33 +1296,33 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 	}
 
 	klog.Infof("Adding or Updating Node %q", node.Name)
-	if nSyncs.syncNode {
+	if nSyncs.SyncNode {
 		if hostSubnets, err = oc.addNode(node); err != nil {
-			oc.addNodeFailed.Store(node.Name, true)
-			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
-			oc.mgmtPortFailed.Store(node.Name, true)
-			oc.gatewaysFailed.Store(node.Name, true)
+			oc.AddNodeFailed.Store(node.Name, true)
+			oc.NodeClusterRouterPortFailed.Store(node.Name, true)
+			oc.MgmtPortFailed.Store(node.Name, true)
+			oc.GatewaysFailed.Store(node.Name, true)
 			return fmt.Errorf("nodeAdd: error creating subnet for node %s: %w", node.Name, err)
 		}
-		oc.addNodeFailed.Delete(node.Name)
+		oc.AddNodeFailed.Delete(node.Name)
 	}
 
-	if nSyncs.syncClusterRouterPort {
+	if nSyncs.SyncClusterRouterPort {
 		if err = oc.syncNodeClusterRouterPort(node, nil); err != nil {
 			errs = append(errs, err)
-			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+			oc.NodeClusterRouterPortFailed.Store(node.Name, true)
 		} else {
-			oc.nodeClusterRouterPortFailed.Delete(node.Name)
+			oc.NodeClusterRouterPortFailed.Delete(node.Name)
 		}
 	}
 
-	if nSyncs.syncMgmtPort {
+	if nSyncs.SyncMgmtPort {
 		err := oc.syncNodeManagementPort(node, hostSubnets)
 		if err != nil {
 			errs = append(errs, err)
-			oc.mgmtPortFailed.Store(node.Name, true)
+			oc.MgmtPortFailed.Store(node.Name, true)
 		} else {
-			oc.mgmtPortFailed.Delete(node.Name)
+			oc.MgmtPortFailed.Delete(node.Name)
 		}
 	}
 
@@ -1333,13 +1333,13 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 
 	oc.clearInitialNodeNetworkUnavailableCondition(node)
 
-	if nSyncs.syncGw {
+	if nSyncs.SyncGw {
 		err := oc.syncNodeGateway(node, nil)
 		if err != nil {
 			errs = append(errs, err)
-			oc.gatewaysFailed.Store(node.Name, true)
+			oc.GatewaysFailed.Store(node.Name, true)
 		} else {
-			oc.gatewaysFailed.Delete(node.Name)
+			oc.GatewaysFailed.Delete(node.Name)
 		}
 	}
 
@@ -1373,10 +1373,10 @@ func (oc *Controller) deleteNodeEvent(node *kapi.Node) error {
 		return err
 	}
 	oc.lsManager.DeleteNode(node.Name)
-	oc.addNodeFailed.Delete(node.Name)
-	oc.mgmtPortFailed.Delete(node.Name)
-	oc.gatewaysFailed.Delete(node.Name)
-	oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	oc.AddNodeFailed.Delete(node.Name)
+	oc.MgmtPortFailed.Delete(node.Name)
+	oc.GatewaysFailed.Delete(node.Name)
+	oc.NodeClusterRouterPortFailed.Delete(node.Name)
 	return nil
 }
 
