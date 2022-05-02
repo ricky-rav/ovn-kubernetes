@@ -17,7 +17,7 @@ ARG OVN_VER
 USER root
 
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
-    iputils-ping software-properties-common util-linux apt-transport-https
+    iputils-ping software-properties-common util-linux apt-transport-https net-tools
 
 # Get ovn from Nvidia controlled source
 RUN echo "deb [trusted=yes] https://sdn_ro:AKCp8jQwj6F1ZZZ8QuN26n3bVcvgYRHEns5aQZDeNsi3PE2f6nQ3YJpEYgxGqbhYcpyCU6bHy@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-debian focal main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list
