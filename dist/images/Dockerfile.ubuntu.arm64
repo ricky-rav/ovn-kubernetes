@@ -8,40 +8,27 @@
 #
 # So this file will change over time.
 
-FROM ubuntu:20.04 as ovn
+FROM ubuntu:20.04
 
 ARG K8S_VER="=1.21.1-00"
 ARG OVS_VER
 ARG OVN_VER
-ARG JFROG_CREDENTIAL
+
 USER root
 
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
-    iputils-ping util-linux gnupg apt-utils net-tools
+    iputils-ping software-properties-common util-linux apt-transport-https net-tools
 
-# Get ovn from Nvidia controlled source, install OVS and OVN packages.
-RUN echo "deb [trusted=yes] https://${JFROG_CREDENTIAL}@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-debian focal main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list && \
-    curl -L edge.urm.nvidia.com/artifactory/api/gpg/key/public | apt-key add - && \
-    echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list && \
-    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \
-    apt-get update && \
-    apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER && \
-    mkdir -p /var/run/openvswitch && \
-    apt-get -y autoremove curl gnupg apt-utils && \
-    rm -f ngn-sdn-ovn.list
+# Get ovn from Nvidia controlled source
+RUN echo "deb [trusted=yes] https://sdn_ro:AKCp8jQwj6F1ZZZ8QuN26n3bVcvgYRHEns5aQZDeNsi3PE2f6nQ3YJpEYgxGqbhYcpyCU6bHy@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-debian focal main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list
+RUN curl -H 'X-JFrog-Art-Api:AKCp8jQwj6F1ZZZ8QuN26n3bVcvgYRHEns5aQZDeNsi3PE2f6nQ3YJpEYgxGqbhYcpyCU6bHy' -L edge.urm.nvidia.com/artifactory/api/gpg/key/public | apt-key add -
+RUN echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
+RUN curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
 
-# ovnkube.sh is the entry point. This script examines environment
-# variables to direct operation and configure ovn
-COPY ovnkube.sh ovndb-raft-functions.sh git_info /root/
+# Install OVS and OVN packages.
+RUN apt-get update && apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER
 
-LABEL io.k8s.display-name="ovn kubernetes" \
-      io.k8s.description="ovnkube ubuntu image" \
-      maintainer="Girish Moodalbail <gmoodalbail@nvidia.com>"
-
-WORKDIR /root
-ENTRYPOINT /root/ovnkube.sh
-
-FROM ovn as ovnkube
+RUN mkdir -p /var/run/openvswitch
 
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the pkg
@@ -49,5 +36,19 @@ RUN mkdir -p /usr/libexec/cni/
 COPY ovnkube ovn-kube-util ovndbchecker /usr/bin/
 COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
+# ovnkube.sh is the entry point. This script examines environment
+# variables to direct operation and configure ovn
+COPY ovnkube.sh /root/
+COPY ovndb-raft-functions.sh /root/
 # override the pkg's ovn_k8s.conf with this local copy
 COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
+
+# copy git commit number into image
+COPY git_info /root
+
+LABEL io.k8s.display-name="ovn kubernetes" \
+      io.k8s.description="ovnkube ubuntu image" \
+      maintainer="Girish Moodalbail <gmoodalbail@nvidia.com>"
+
+WORKDIR /root
+ENTRYPOINT /root/ovnkube.sh
