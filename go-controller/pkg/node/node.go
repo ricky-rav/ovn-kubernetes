@@ -31,6 +31,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/upgrade"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/vishvananda/netlink"
 )
 
 // OvnNode is the object holder for utilities meant for node management
@@ -565,15 +566,33 @@ func (n *OvnNode) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	return err
 }
 
+type endpointUDPEntryToFlush struct {
+	ip           string
+	port         int32
+	protocol     kapi.Protocol
+	ipFilterType netlink.ConntrackFilterType
+}
+
 func (n *OvnNode) WatchEndpoints() {
+	// r := ovn.NewRetryObjs(nil, "", nil, nil, nil)
+	// r.WatchResource(n)
+	// Here we watch endpoints and flush their corresponding UDP conntrack entries
 	n.watchFactory.AddEndpointsHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: func(old, new interface{}) {
 			epNew := new.(*kapi.Endpoints)
 			epOld := old.(*kapi.Endpoints)
 			newEpAddressMap := buildEndpointAddressMap(epNew.Subsets)
-			for item := range buildEndpointAddressMap(epOld.Subsets) {
-				if _, ok := newEpAddressMap[item]; !ok {
-					err := deleteConntrack(item.ip, item.port, item.protocol)
+			for item := range buildEndpointAddressMap(epOld.Subsets) { // one item is: ip,port,protocol
+				// delete from conntrack each ip,port,UDP endpoint that is in old but not in new obj
+				// PROBLEM: Here there's no AddFunc, so the corresponding switch/case block in addResource
+				// will execute nothing if fromRetryLoop=false. When this variable is true, it should delete the
+				// conntrack entries corresponding to the items found in the lines here below. \
+				// So in retry entries you should store the items to DELETE. There will be no ADD anywheere for this controller.
+				// The object to retry should point to a list of (item.ip, item.port, item.protocol, netlink.ConntrackReplyAnyIP)
+				// to delete. Try to delete them all. Keep a list of items that fail to be deleted, which will
+				// go to the retry entry for this Endpoint.
+				if _, ok := newEpAddressMap[item]; !ok && item.protocol == kapi.ProtocolUDP { // flush conntrack only for UDP
+					err := util.DeleteConntrack(item.ip, item.port, item.protocol, netlink.ConntrackReplyAnyIP)
 					if err != nil {
 						klog.Errorf("Failed to delete conntrack entry for %s: %v", item.ip, err)
 					}
@@ -583,11 +602,12 @@ func (n *OvnNode) WatchEndpoints() {
 		DeleteFunc: func(obj interface{}) {
 			ep := obj.(*kapi.Endpoints)
 			for item := range buildEndpointAddressMap(ep.Subsets) {
-				err := deleteConntrack(item.ip, item.port, item.protocol)
-				if err != nil {
-					klog.Errorf("Failed to delete conntrack entry for %s: %v", item.ip, err)
+				if item.protocol == kapi.ProtocolUDP { // flush conntrack only for UDP
+					err := util.DeleteConntrack(item.ip, item.port, item.protocol, netlink.ConntrackReplyAnyIP)
+					if err != nil {
+						klog.Errorf("Failed to delete conntrack entry for %s: %v", item.ip, err)
+					}
 				}
-
 			}
 		},
 	}, nil)

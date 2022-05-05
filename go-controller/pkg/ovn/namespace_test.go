@@ -111,13 +111,13 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			)
 			podMAC := ovntest.MustParseMAC(tP.podMAC)
 			podIPNets := []*net.IPNet{ovntest.MustParseIPNet(tP.podIP + "/24")}
-			fakeOvn.controller.logicalPortCache.add(tP.nodeName, tP.portName, fakeUUID, podMAC, podIPNets)
+			fakeOvn.controller.LogicalPortCache.add(tP.nodeName, tP.portName, fakeUUID, podMAC, podIPNets)
 			fakeOvn.controller.WatchNamespaces()
 
 			_, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceT.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOvn.asf.ExpectAddressSetWithIPs(namespaceName, []string{tP.podIP})
+			fakeOvn.asf.EventuallyExpectAddressSetWithIPs(namespaceName, []string{tP.podIP})
 		})
 
 		ginkgo.It("creates an empty address set for the namespace without pods", func() {
@@ -230,6 +230,9 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			fakeOvn.controller.multicastSupport = false
 			fakeOvn.controller.SCTPSupport = true
 
+			fakeOvn.controller.defaultGatewayCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 			_, clusterNetwork, err := net.ParseCIDR(clusterCIDR)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			fakeOvn.controller.masterSubnetAllocator.AddNetworkRange(clusterNetwork, 24)
@@ -275,7 +278,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			// Add cluster LB Group to node switch.
 			expectedNodeSwitch.LoadBalancerGroup = []string{expectedClusterLBGroup.UUID}
 
-			expectedDatabaseState = addNodeLogicalFlows(expectedDatabaseState, expectedOVNClusterRouter, expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1, clusterCIDR, config.IPv6Mode)
+			expectedDatabaseState = addNodeLogicalFlows(expectedDatabaseState, expectedOVNClusterRouter, expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1)
 
 			fakeOvn.controller.joinSwIPManager, _ = lsm.NewJoinLogicalSwitchIPManager(fakeOvn.nbClient, expectedNodeSwitch.UUID, []string{node1.Name})
 			_, err = fakeOvn.controller.joinSwIPManager.EnsureJoinLRPIPs(ovntypes.OVNClusterRouter)
@@ -317,7 +320,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			for _, lrpIP := range gwLRPIPs {
 				allowIPs = append(allowIPs, lrpIP.IP.String())
 			}
-			fakeOvn.asf.ExpectAddressSetWithIPs(hostNetworkNamespace, allowIPs)
+			fakeOvn.asf.EventuallyExpectAddressSetWithIPs(hostNetworkNamespace, allowIPs)
 		})
 	})
 

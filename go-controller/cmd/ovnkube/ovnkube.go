@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -242,8 +243,13 @@ func runOvnKube(ctx *cli.Context) error {
 		// register prometheus metrics that do not depend on becoming ovnkube-master leader
 		metrics.RegisterMasterBase()
 
+		retryPack := &ovn.RetryObjsPack{
+			retryPods:            retry.NewRetryObjs(factory.PodType, "", nil, nil, nil),
+			retryNodes:           retry.NewRetryObjs(factory.NodeType, "", nil, nil, nil),
+			retryNetworkPolicies: retry.NewRetryObjs(factory.NetworkPolicyType, "", nil, nil, nil)}
+
 		ovnController := ovn.NewOvnController(ovnClientset, masterWatchFactory, stopChan, nil,
-			libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient))
+			libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient), retryPack)
 		if err := ovnController.Start(master, wg, ctx.Context); err != nil {
 			return err
 		}
@@ -278,15 +284,18 @@ func runOvnKube(ctx *cli.Context) error {
 
 	// now that ovnkube master/node are running, lets expose the metrics HTTP endpoint if configured
 	// start the prometheus server to serve OVN K8s Metrics (default master port: 9409, node port: 9410)
-	if config.Kubernetes.MetricsBindAddress != "" {
-		metrics.StartMetricsServer(config.Kubernetes.MetricsBindAddress, config.Kubernetes.MetricsEnablePprof)
+	if config.Metrics.BindAddress != "" {
+		metrics.StartMetricsServer(config.Metrics.BindAddress, config.Metrics.EnablePprof)
 	}
 
-	// start the prometheus server to serve OVN Metrics (default port: 9476)
-	// Note: for ovnkube node mode dpu-host no ovn metrics is required as ovn is not running on the node.
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.Kubernetes.OVNMetricsBindAddress != "" {
+	// start the prometheus server to serve OVS and OVN Metrics (default port: 9476)
+	// Note: for ovnkube node mode dpu-host no metrics is required as ovs/ovn is not running on the node.
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.Metrics.OVNMetricsBindAddress != "" {
+		if config.Metrics.ExportOVSMetrics {
+			metrics.RegisterOvsMetricsWithOvnMetrics()
+		}
 		metrics.RegisterOvnMetrics(ovnClientset.KubeClient, node)
-		metrics.StartOVNMetricsServer(config.Kubernetes.OVNMetricsBindAddress)
+		metrics.StartOVNMetricsServer(config.Metrics.OVNMetricsBindAddress)
 	}
 
 	// run until cancelled

@@ -1,12 +1,10 @@
 package ovn
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,13 +12,13 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdbops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/pkg/errors"
 
@@ -158,7 +156,7 @@ func (oc *Controller) addPodExternalGW(pod *kapi.Pod) error {
 	foundGws, err := getExGwPodIPs(pod)
 	if err != nil {
 		klog.Errorf("Error getting exgw IPs for pod: %s, error: %v", pod.Name, err)
-		oc.recordPodEvent(err, pod)
+		oc.RecordPodEvent(err, pod)
 		return nil
 	}
 
@@ -218,7 +216,7 @@ func (oc *Controller) addExternalGWsForNamespace(egress gatewayInfo, nsInfo *nam
 
 // addGWRoutesForNamespace handles adding routes for all existing pods in namespace
 func (oc *Controller) addGWRoutesForNamespace(namespace string, egress gatewayInfo) error {
-	existingPods, err := oc.watchFactory.GetPods(namespace)
+	existingPods, err := oc.WatchFactory.GetPods(namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get all the pods (%v)", err)
 	}
@@ -255,14 +253,7 @@ func (oc *Controller) addGWRoutesForNamespace(namespace string, egress gatewayIn
 }
 
 func (oc *Controller) createBFDStaticRoute(bfdEnabled bool, gw net.IP, podIP, gr, port, mask string) error {
-	opModels := []libovsdbops.OperationModel{}
-
-	bfd := nbdb.BFD{
-		DstIP:       gw.String(),
-		LogicalPort: port,
-	}
-	logicalRouter := nbdb.LogicalRouter{}
-	logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
+	lrsr := nbdb.LogicalRouterStaticRoute{
 		Policy: &nbdb.LogicalRouterStaticRoutePolicySrcIP,
 		Options: map[string]string{
 			"ecmp_symmetric_reply": "true",
@@ -271,76 +262,52 @@ func (oc *Controller) createBFDStaticRoute(bfdEnabled bool, gw net.IP, podIP, gr
 		IPPrefix:   podIP + mask,
 		OutputPort: &port,
 	}
+
+	ops := []ovsdb.Operation{}
+	var err error
 	if bfdEnabled {
-		opModels = []libovsdbops.OperationModel{
-			{
-				Model: &bfd,
-				DoAfter: func() {
-					logicalRouterStaticRoute.BFD = &bfd.UUID
-				},
-			},
+		bfd := nbdb.BFD{
+			DstIP:       gw.String(),
+			LogicalPort: port,
 		}
+		ops, err = libovsdbops.CreateOrUpdateBFDOps(oc.nbClient, ops, &bfd)
+		if err != nil {
+			return fmt.Errorf("error creating or updating BFD %+v: %v", bfd, err)
+		}
+		lrsr.BFD = &bfd.UUID
 	}
-	opModels = append(opModels, []libovsdbops.OperationModel{
-		{
-			Model: &logicalRouterStaticRoute,
-			ModelPredicate: func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-				return lrsr.IPPrefix == podIP+mask &&
-					lrsr.Nexthop == gw.String() &&
-					lrsr.OutputPort != nil && *lrsr.OutputPort == port
-			},
-			DoAfter: func() {
-				if logicalRouterStaticRoute.UUID != "" {
-					logicalRouter.StaticRoutes = []string{logicalRouterStaticRoute.UUID}
-				}
-			},
-		}, {
-			Name:  &logicalRouter.Name,
-			Model: &logicalRouter,
-			ModelPredicate: func(lr *nbdb.LogicalRouter) bool {
-				return lr.Name == gr
-			},
-			OnModelMutations: []interface{}{
-				&logicalRouter.StaticRoutes,
-			},
-			ErrNotFound: true,
-		},
-	}...)
-	if _, err := oc.modelClient.CreateOrUpdate(opModels...); err != nil {
-		return fmt.Errorf("unable to add src-ip route to GR router, err: %v", err)
+
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		return item.IPPrefix == lrsr.IPPrefix &&
+			item.Nexthop == lrsr.Nexthop &&
+			item.OutputPort != nil &&
+			*item.OutputPort == *lrsr.OutputPort
 	}
+	ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(oc.nbClient, ops, gr, &lrsr, p)
+	if err != nil {
+		return fmt.Errorf("error creating or updating static route %+v on router %s: %v", lrsr, gr, err)
+	}
+
+	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("error transacting static route: %v", err)
+	}
+
 	return nil
 }
 
 func (oc *Controller) deleteLogicalRouterStaticRoute(podIP, mask, gw, gr string) error {
-	logicalRouter := nbdb.LogicalRouter{}
-	logicalRouterStaticRouteRes := []nbdb.LogicalRouterStaticRoute{}
-	opModels := []libovsdbops.OperationModel{
-		{
-			ModelPredicate: func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-				return lrsr.Policy != nil && *lrsr.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP &&
-					lrsr.IPPrefix == podIP+mask &&
-					lrsr.Nexthop == gw
-			},
-			ExistingResult: &logicalRouterStaticRouteRes,
-			DoAfter: func() {
-				logicalRouter.StaticRoutes = libovsdbops.ExtractUUIDsFromModels(&logicalRouterStaticRouteRes)
-			},
-			BulkOp: true,
-		},
-		{
-			Model: &logicalRouter,
-			ModelPredicate: func(lr *nbdb.LogicalRouter) bool {
-				return lr.Name == gr
-			},
-			OnModelMutations: []interface{}{
-				&logicalRouter.StaticRoutes,
-			},
-		},
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		return item.Policy != nil &&
+			*item.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP &&
+			item.IPPrefix == podIP+mask &&
+			item.Nexthop == gw
 	}
-	if err := oc.modelClient.Delete(opModels...); err != nil {
-		return fmt.Errorf("unable to delete src-ip route to GR router, err: %v", err)
+	err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(oc.nbClient, gr, p)
+	if err != nil {
+		return fmt.Errorf("error deleting static route from router %s: %v", gr, err)
 	}
+
 	return nil
 }
 
@@ -361,7 +328,9 @@ func (oc *Controller) deletePodGWRoute(routeInfo *externalRouteInfo, podIP, gw, 
 		routeInfo.podName, gr, gw)
 
 	node := util.GetWorkerFromGatewayRouter(gr)
-	if entry := routeInfo.podExternalRoutes[podIP]; len(entry) == 0 {
+	// The gw is deleted from the routes cache after this func is called, length 1
+	// means it is the last gw for the pod and the hybrid route policy should be deleted.
+	if entry := routeInfo.podExternalRoutes[podIP]; len(entry) == 1 {
 		if err := oc.delHybridRoutePolicyForPod(net.ParseIP(podIP), node); err != nil {
 			return fmt.Errorf("unable to delete hybrid route policy for pod %s: err: %v", routeInfo.podName, err)
 		}
@@ -556,14 +525,14 @@ func buildPerPodGRSNAT(extIPs, podIPNets []*net.IPNet) ([]*nbdb.NAT, error) {
 			return nil, fmt.Errorf("invalid IP: %s and mask: %s combination, error: %v", podIP, mask, err)
 		}
 		if len(extIPs) == 0 {
-			nat = libovsdbops.BuildRouterSNAT(nil, fullMaskPodNet, "", nil)
+			nat = libovsdbops.BuildSNAT(nil, fullMaskPodNet, "", nil)
 		} else {
 			for _, gwIPNet := range extIPs {
 				gwIP := gwIPNet.IP.String()
 				if utilnet.IsIPv6String(gwIP) != utilnet.IsIPv6String(podIP) {
 					continue
 				}
-				nat = libovsdbops.BuildRouterSNAT(&gwIPNet.IP, fullMaskPodNet, "", nil)
+				nat = libovsdbops.BuildSNAT(&gwIPNet.IP, fullMaskPodNet, "", nil)
 			}
 		}
 		nats = append(nats, nat)
@@ -589,15 +558,16 @@ func getExternalIPsGRSNAT(watchFactory *factory.WatchFactory, nodeName string) (
 // if allSNATs flag is set, then all the SNATs (including against egressIPs if any) for that pod will be deleted
 // used when disableSNATMultipleGWs=true
 func deletePerPodGRSNAT(nbClient libovsdbclient.Client, nodeName string, extIPs, podIPNets []*net.IPNet) error {
-	gr := types.GWRouterPrefix + nodeName
 	nats, err := buildPerPodGRSNAT(extIPs, podIPNets)
 	if err != nil {
 		return err
 	}
-	err = libovsdbops.DeleteNATsFromRouter(nbClient, gr, nats...)
+	logicalRouter := nbdb.LogicalRouter{
+		Name: types.GWRouterPrefix + nodeName,
+	}
+	err = libovsdbops.DeleteNATs(nbClient, &logicalRouter, nats...)
 	if err != nil {
-		return fmt.Errorf("failed to delete SNAT rule for pod on gateway router %s, "+
-			"error: %v", gr, err)
+		return fmt.Errorf("failed to delete SNAT rule for pod on gateway router %s: %v", logicalRouter.Name, err)
 	}
 	return nil
 }
@@ -605,13 +575,15 @@ func deletePerPodGRSNAT(nbClient libovsdbclient.Client, nodeName string, extIPs,
 // addOrUpdatePerPodGRSNAT adds or updates per pod SNAT rules towards the nodeIP that are applied to the GR where the pod resides
 // used when disableSNATMultipleGWs=true
 func addOrUpdatePerPodGRSNAT(nbClient libovsdbclient.Client, nodeName string, extIPs, podIfAddrs []*net.IPNet) error {
-	gr := types.GWRouterPrefix + nodeName
 	nats, err := buildPerPodGRSNAT(extIPs, podIfAddrs)
 	if err != nil {
 		return err
 	}
-	if err := libovsdbops.AddOrUpdateNATsToRouter(nbClient, gr, nats...); err != nil {
-		return fmt.Errorf("failed to update SNAT for pods of router: %s, error: %v", gr, err)
+	logicalRouter := nbdb.LogicalRouter{
+		Name: types.GWRouterPrefix + nodeName,
+	}
+	if err := libovsdbops.CreateOrUpdateNATs(nbClient, &logicalRouter, nats...); err != nil {
+		return fmt.Errorf("failed to update SNAT for pods of router %s: %v", logicalRouter.Name, err)
 	}
 	return nil
 }
@@ -671,43 +643,18 @@ func (oc *Controller) addHybridRoutePolicyForPod(podIP net.IP, node string) erro
 		matchStr := fmt.Sprintf(`inport == "%s%s" && %s.src == $%s`, types.RouterToSwitchPrefix, node, l3Prefix, matchSrcAS)
 		matchStr += matchDst
 
-		intPriority, _ := strconv.Atoi(types.HybridOverlayReroutePriority)
-
-		logicalRouter := nbdb.LogicalRouter{}
 		logicalRouterPolicy := nbdb.LogicalRouterPolicy{
-			Priority: intPriority,
+			Priority: types.HybridOverlayReroutePriority,
 			Action:   nbdb.LogicalRouterPolicyActionReroute,
 			Nexthops: []string{grJoinIfAddr.IP.String()},
 			Match:    matchStr,
 		}
-		opModels := []libovsdbops.OperationModel{
-			{
-				Model: &logicalRouterPolicy,
-				ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-					return lrp.Priority == intPriority && strings.Contains(lrp.Match, matchSrcAS)
-				},
-				OnModelUpdates: []interface{}{
-					&logicalRouterPolicy.Nexthops,
-					&logicalRouterPolicy.Match,
-				},
-				DoAfter: func() {
-					if logicalRouterPolicy.UUID != "" {
-						logicalRouter.Policies = []string{logicalRouterPolicy.UUID}
-					}
-				},
-			},
-			{
-				Name:           &logicalRouter.Name,
-				Model:          &logicalRouter,
-				ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == types.OVNClusterRouter },
-				OnModelMutations: []interface{}{
-					&logicalRouter.Policies,
-				},
-				ErrNotFound: true,
-			},
+		p := func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.Priority == logicalRouterPolicy.Priority && strings.Contains(item.Match, matchSrcAS)
 		}
-		if _, err := oc.modelClient.CreateOrUpdate(opModels...); err != nil {
-			return fmt.Errorf("failed to add policy route '%s' to %s, error: %v", matchStr, types.OVNClusterRouter, err)
+		err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(oc.nbClient, types.OVNClusterRouter, &logicalRouterPolicy, p)
+		if err != nil {
+			return fmt.Errorf("failed to add policy route %+v to %s: %v", logicalRouterPolicy, types.OVNClusterRouter, err)
 		}
 	}
 	return nil
@@ -763,31 +710,12 @@ func (oc *Controller) delHybridRoutePolicyForPod(podIP net.IP, node string) erro
 			matchStr := fmt.Sprintf(`inport == "%s%s" && %s.src == $%s`, types.RouterToSwitchPrefix, node, l3Prefix, matchSrcAS)
 			matchStr += matchDst
 
-			intPriority, _ := strconv.Atoi(types.HybridOverlayReroutePriority)
-
-			logicalRouter := nbdb.LogicalRouter{}
-			logicalRouterPolicyRes := []nbdb.LogicalRouterPolicy{}
-			opModels := []libovsdbops.OperationModel{
-				{
-					ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-						return lrp.Priority == intPriority && lrp.Match == matchStr
-					},
-					ExistingResult: &logicalRouterPolicyRes,
-					DoAfter: func() {
-						logicalRouter.Policies = libovsdbops.ExtractUUIDsFromModels(&logicalRouterPolicyRes)
-					},
-					BulkOp: true,
-				},
-				{
-					Model:          &logicalRouter,
-					ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == ovntypes.OVNClusterRouter },
-					OnModelMutations: []interface{}{
-						&logicalRouter.Policies,
-					},
-				},
+			p := func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.Priority == types.HybridOverlayReroutePriority && item.Match == matchStr
 			}
-			if err := oc.modelClient.Delete(opModels...); err != nil {
-				return fmt.Errorf("failed to remove policy: %s, on: %s, err: %v", matchStr, types.OVNClusterRouter, err)
+			err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(oc.nbClient, types.OVNClusterRouter, p)
+			if err != nil {
+				return fmt.Errorf("error deleting policy %s on router %s: %v", matchStr, types.OVNClusterRouter, err)
 			}
 		}
 		if len(ipv4PodIPs) == 0 && len(ipv6PodIPs) == 0 {
@@ -807,47 +735,22 @@ func (oc *Controller) delHybridRoutePolicyForPod(podIP net.IP, node string) erro
 // Called when migrating to SGW from LGW.
 func (oc *Controller) delAllHybridRoutePolicies() error {
 	// nuke all the policies
-	intPriority, _ := strconv.Atoi(types.HybridOverlayReroutePriority)
-
-	logicalRouter := nbdb.LogicalRouter{}
-	logicalRouterPolicyRes := []nbdb.LogicalRouterPolicy{}
-	opModels := []libovsdbops.OperationModel{
-		{
-			ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-				return lrp.Priority == intPriority
-			},
-			ExistingResult: &logicalRouterPolicyRes,
-			DoAfter: func() {
-				logicalRouter.Policies = libovsdbops.ExtractUUIDsFromModels(&logicalRouterPolicyRes)
-			},
-			BulkOp: true,
-		},
-		{
-			Model:          &logicalRouter,
-			ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == ovntypes.OVNClusterRouter },
-			OnModelMutations: []interface{}{
-				&logicalRouter.Policies,
-			},
-		},
+	policyPred := func(item *nbdb.LogicalRouterPolicy) bool {
+		return item.Priority == types.HybridOverlayReroutePriority
 	}
-	if err := oc.modelClient.Delete(opModels...); err != nil {
-		return fmt.Errorf("failed to remove hybrid route policies on: %s, err: %v", types.OVNClusterRouter, err)
+	err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(oc.nbClient, types.OVNClusterRouter, policyPred)
+	if err != nil {
+		return fmt.Errorf("error deleting hybrid route policies on %s: %v", types.OVNClusterRouter, err)
 	}
 
 	// nuke all the address-sets.
 	// if we fail to remove LRP's above, we don't attempt to remove ASes due to dependency constraints.
-	addrSetList := []nbdb.AddressSet{}
-	addrSetOpModels := []libovsdbops.OperationModel{
-		{
-			ModelPredicate: func(as *nbdb.AddressSet) bool {
-				return strings.Contains(as.ExternalIDs["name"], types.HybridRoutePolicyPrefix)
-			},
-			ExistingResult: &addrSetList,
-			BulkOp:         true,
-		},
+	asPred := func(item *nbdb.AddressSet) bool {
+		return strings.Contains(item.ExternalIDs["name"], types.HybridRoutePolicyPrefix)
 	}
-	if err := oc.modelClient.Delete(addrSetOpModels...); err != nil {
-		return fmt.Errorf("failed to remove hybrid route address sets, err: %v", err)
+	err = libovsdbops.DeleteAddressSetsWithPredicate(oc.nbClient, asPred)
+	if err != nil {
+		return fmt.Errorf("failed to remove hybrid route address sets: %v", err)
 	}
 
 	return nil
@@ -858,37 +761,18 @@ func (oc *Controller) delAllHybridRoutePolicies() error {
 // New hybrid route matches on address set, while legacy matches just on pod IP
 func (oc *Controller) delAllLegacyHybridRoutePolicies() error {
 	// nuke all the policies
-	intPriority, _ := strconv.Atoi(types.HybridOverlayReroutePriority)
-
-	logicalRouter := nbdb.LogicalRouter{}
-	logicalRouterPolicyRes := []nbdb.LogicalRouterPolicy{}
-	opModels := []libovsdbops.OperationModel{
-		{
-			ModelPredicate: func(lrp *nbdb.LogicalRouterPolicy) bool {
-				if lrp.Priority != intPriority {
-					return false
-				}
-				if isNewVer, err := regexp.MatchString(`src\s*==\s*\$`, lrp.Match); err == nil && isNewVer {
-					return false
-				}
-				return true
-			},
-			ExistingResult: &logicalRouterPolicyRes,
-			DoAfter: func() {
-				logicalRouter.Policies = libovsdbops.ExtractUUIDsFromModels(&logicalRouterPolicyRes)
-			},
-			BulkOp: true,
-		},
-		{
-			Model:          &logicalRouter,
-			ModelPredicate: func(lr *nbdb.LogicalRouter) bool { return lr.Name == ovntypes.OVNClusterRouter },
-			OnModelMutations: []interface{}{
-				&logicalRouter.Policies,
-			},
-		},
+	p := func(item *nbdb.LogicalRouterPolicy) bool {
+		if item.Priority != types.HybridOverlayReroutePriority {
+			return false
+		}
+		if isNewVer, err := regexp.MatchString(`src\s*==\s*\$`, item.Match); err == nil && isNewVer {
+			return false
+		}
+		return true
 	}
-	if err := oc.modelClient.Delete(opModels...); err != nil {
-		return fmt.Errorf("failed to remove legacy hybrid route policies on: %s, err: %v", types.OVNClusterRouter, err)
+	err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(oc.nbClient, types.OVNClusterRouter, p)
+	if err != nil {
+		return fmt.Errorf("error deleting legacy hybrid route policies on %s: %v", types.OVNClusterRouter, err)
 	}
 
 	return nil
@@ -899,31 +783,26 @@ func (oc *Controller) delAllLegacyHybridRoutePolicies() error {
 // not removes the entry to avoid having dangling BFD entries.
 func (oc *Controller) cleanUpBFDEntry(gatewayIP, gatewayRouter, prefix string) error {
 	portName := prefix + types.GWRouterToExtSwitchPrefix + gatewayRouter
-
-	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
-	defer cancel()
-	logicalRouterStaticRouteRes := []nbdb.LogicalRouterStaticRoute{}
-	err := oc.nbClient.WhereCache(func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-		return lrsr.OutputPort != nil && *lrsr.OutputPort == portName && lrsr.Nexthop == gatewayIP && lrsr.BFD != nil && *lrsr.BFD != ""
-	}).List(ctx, &logicalRouterStaticRouteRes)
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		return item.OutputPort != nil && *item.OutputPort == portName && item.Nexthop == gatewayIP && item.BFD != nil && *item.BFD != ""
+	}
+	logicalRouterStaticRoutes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(oc.nbClient, p)
 	if err != nil {
 		return fmt.Errorf("cleanUpBFDEntry failed to list routes for %s: %w", portName, err)
 	}
 
-	if len(logicalRouterStaticRouteRes) > 0 {
+	if len(logicalRouterStaticRoutes) > 0 {
 		return nil
 	}
 
-	opModels := []libovsdbops.OperationModel{
-		{
-			Model: &nbdb.BFD{
-				LogicalPort: portName,
-				DstIP:       gatewayIP,
-			},
-		},
+	bfd := nbdb.BFD{
+		LogicalPort: portName,
+		DstIP:       gatewayIP,
 	}
-	if err := oc.modelClient.Delete(opModels...); err != nil {
-		return fmt.Errorf("failed to delete BFD: %w", err)
+
+	err = libovsdbops.DeleteBFDs(oc.nbClient, &bfd)
+	if err != nil {
+		return fmt.Errorf("error deleting BFD %+v: %v", bfd, err)
 	}
 
 	return nil
@@ -933,7 +812,7 @@ func (oc *Controller) cleanUpBFDEntry(gatewayIP, gatewayRouter, prefix string) e
 // external gateway routes. In case no second bridge is configured, we
 // use the default one and the prefix is empty.
 func (oc *Controller) extSwitchPrefix(nodeName string) (string, error) {
-	node, err := oc.watchFactory.GetNode(nodeName)
+	node, err := oc.WatchFactory.GetNode(nodeName)
 	if err != nil {
 		return "", errors.Wrapf(err, "extSwitchPrefix: failed to find node %s", nodeName)
 	}
@@ -1037,22 +916,10 @@ func (oc *Controller) cleanExGwECMPRoutes() {
 			if !ovnRoute.shouldExist {
 				klog.Infof("Found stale exgw ecmp route, podIP: %s, nexthop: %s, router: %s",
 					podIP, ovnRoute.nextHop, ovnRoute.router)
-				logicalRouter := nbdb.LogicalRouter{
-					StaticRoutes: []string{ovnRoute.uuid},
-				}
-				opModels := []libovsdbops.OperationModel{
-					{
-						Model: &logicalRouter,
-						ModelPredicate: func(lr *nbdb.LogicalRouter) bool {
-							return lr.Name == ovnRoute.router
-						},
-						OnModelMutations: []interface{}{
-							&logicalRouter.StaticRoutes,
-						},
-					},
-				}
-				if err := oc.modelClient.Delete(opModels...); err != nil {
-					klog.Errorf("Failed to destroy Logical_Router_Static_Route %s, err: %v", ovnRoute.uuid, err)
+				lrsr := nbdb.LogicalRouterStaticRoute{UUID: ovnRoute.uuid}
+				err := libovsdbops.DeleteLogicalRouterStaticRoutes(oc.nbClient, ovnRoute.router, &lrsr)
+				if err != nil {
+					klog.Errorf("Error deleting static route %s from router %s: %v", ovnRoute.uuid, ovnRoute.router, err)
 				}
 
 				// check to see if we should also clean up bfd
@@ -1124,7 +991,7 @@ func getExGwPodIPs(gatewayPod *kapi.Pod) ([]net.IP, error) {
 }
 
 func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[string][]string) {
-	namespaces, err := oc.watchFactory.GetNamespaces()
+	namespaces, err := oc.WatchFactory.GetNamespaces()
 	if err != nil {
 		klog.Errorf("Error getting all namespaces for exgw ecmp route sync: %v", err)
 		return
@@ -1140,7 +1007,7 @@ func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[
 			continue
 		}
 		// get all pods in the namespace
-		nsPods, err := oc.watchFactory.GetPods(namespace.Name)
+		nsPods, err := oc.WatchFactory.GetPods(namespace.Name)
 		if err != nil {
 			klog.Errorf("Unable to clean ExGw ECMP routes for namespace: %s, %v",
 				namespace, err)
@@ -1175,7 +1042,7 @@ func (oc *Controller) buildClusterECMPCacheFromNamespaces(clusterRouteCache map[
 
 func (oc *Controller) buildClusterECMPCacheFromPods(clusterRouteCache map[string][]string) {
 	// Get all Pods serving as exgws
-	pods, err := oc.watchFactory.GetAllPods()
+	pods, err := oc.WatchFactory.GetAllPods()
 	if err != nil {
 		klog.Error("Error getting all pods for exgw ecmp route sync: %v", err)
 		return
@@ -1186,7 +1053,7 @@ func (oc *Controller) buildClusterECMPCacheFromPods(clusterRouteCache map[string
 			continue
 		}
 		// get all pods in the namespace
-		nsPods, err := oc.watchFactory.GetPods(podRoutingNamespaceAnno)
+		nsPods, err := oc.WatchFactory.GetPods(podRoutingNamespaceAnno)
 		if err != nil {
 			klog.Errorf("Unable to clean ExGw ECMP routes for exgw: %s, serving namespace: %s, %v",
 				pod.Name, podRoutingNamespaceAnno, err)
@@ -1213,28 +1080,30 @@ func (oc *Controller) buildClusterECMPCacheFromPods(clusterRouteCache map[string
 }
 
 func (oc *Controller) buildOVNECMPCache() map[string][]*ovnRoute {
-	ovnRouteCache := make(map[string][]*ovnRoute)
-	logicalRouterStaticRouteRes := []nbdb.LogicalRouterStaticRoute{}
-	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
-	defer cancel()
-	if err := oc.nbClient.WhereCache(func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-		return lrsr.Options["ecmp_symmetric_reply"] == "true"
-	}).List(ctx, &logicalRouterStaticRouteRes); err != nil {
-		klog.Errorf("CleanECMPRoutes: failed to list ecmp routes %v", err)
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		return item.Options["ecmp_symmetric_reply"] == "true"
+	}
+	logicalRouterStaticRoutes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(oc.nbClient, p)
+	if err != nil {
+		klog.Errorf("CleanECMPRoutes: failed to list ecmp routes: %v", err)
 		return nil
 	}
-	for _, logicalRouterStaticRoute := range logicalRouterStaticRouteRes {
-		logicalRouterRes := []nbdb.LogicalRouter{}
-		if err := oc.nbClient.WhereCache(func(lr *nbdb.LogicalRouter) bool {
-			return util.SliceHasStringItem(lr.StaticRoutes, logicalRouterStaticRoute.UUID)
-		}).List(ctx, &logicalRouterRes); err != nil {
+
+	ovnRouteCache := make(map[string][]*ovnRoute)
+	for _, logicalRouterStaticRoute := range logicalRouterStaticRoutes {
+		p := func(item *nbdb.LogicalRouter) bool {
+			return util.SliceHasStringItem(item.StaticRoutes, logicalRouterStaticRoute.UUID)
+		}
+		logicalRouters, err := libovsdbops.FindLogicalRoutersWithPredicate(oc.nbClient, p)
+		if err != nil {
 			klog.Errorf("CleanECMPRoutes: failed to find logical router for %s, err: %v", logicalRouterStaticRoute.UUID, err)
 			continue
 		}
+
 		route := &ovnRoute{
 			nextHop: logicalRouterStaticRoute.Nexthop,
 			uuid:    logicalRouterStaticRoute.UUID,
-			router:  logicalRouterRes[0].Name,
+			router:  logicalRouters[0].Name,
 			outport: *logicalRouterStaticRoute.OutputPort,
 		}
 		podIP, _, _ := net.ParseCIDR(logicalRouterStaticRoute.IPPrefix)
