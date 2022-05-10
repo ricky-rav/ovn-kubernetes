@@ -26,7 +26,7 @@ RUN echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/
 RUN curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
 
 # Install OVS and OVN packages.
-RUN apt-get update && apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER
+RUN apt-get update && apt-get install -y libopenvswitch$OVS_VER openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER
 
 RUN mkdir -p /var/run/openvswitch
 
