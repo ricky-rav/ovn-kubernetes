@@ -1,0 +1,10 @@
+version = "1.0.0"
+
+[oss]
+
+[[oss.allowlist]]
+cve-id = "CVE-2022-27649"
+package = "Podman"
+versions = ["Upto 4.0.2"]
+jira = "SDN-1504"
+
