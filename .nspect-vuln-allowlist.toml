@@ -8,3 +8,8 @@ package = "Podman"
 versions = ["Upto 4.0.2"]
 jira = "SDN-1504"
 
+[[oss.allowlist]]
+cve-id = "CVE-2022-1227"
+package = "Podman"
+versions = ["Upto 4.0.0"]
+jira = "SDN-1511"
