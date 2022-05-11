@@ -5,8 +5,8 @@ USER root
 ENV PYTHONDONTWRITEBYTECODE yes
 
 # Get openvswitch from Nvidia controlled source
-# Based on:OVS=2.17.1.e8c89baa.06871943 OVN=22.03.0.d7cd4eeb.06871943
-# Based on:OVS=2.17.1.e8c89baa.06871943 OVN=22.03.0.d7cd4eeb.06871943
+# Based on:OVS=2.17.1.7ad6e0f3.069c9f4c OVN=22.03.0.d7cd4eeb.069c9f4c
+# Based on:OVS=2.17.1.7ad6e0f3.069c9f4c OVN=22.03.0.d7cd4eeb.069c9f4c
 
 ARG OVS_REPO=ovs.repo
 ARG OVN_REPO=ovn.repo
