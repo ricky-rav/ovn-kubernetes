@@ -508,8 +508,8 @@ ovn_image=${image} \
   j2 ../templates/ovs-node.yaml.j2 -o ${output_dir}/ovs-node.yaml
 
 # ovn-setup.yaml
-net_cidr=${OVN_NET_CIDR:-"10.128.0.0/14/23"}
-svc_cidr=${OVN_SVC_CIDR:-"172.30.0.0/16"}
+net_cidr=${OVN_NET_CIDR:-"10.244.0.0/16"}
+svc_cidr=${OVN_SVC_CIDR:-"10.96.0.0/16"}
 k8s_apiserver=${OVN_K8S_APISERVER:-"10.0.2.16:6443"}
 mtu=${OVN_MTU:-1400}
 host_network_namespace=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}

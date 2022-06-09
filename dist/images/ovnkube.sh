@@ -159,8 +159,8 @@ ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}
 
-net_cidr=${OVN_NET_CIDR:-10.128.0.0/14/23}
-svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
+net_cidr=${OVN_NET_CIDR:-10.244.0.0/16}
+svc_cidr=${OVN_SVC_CIDR:-10.96.0.0/16}
 mtu=${OVN_MTU:-1400}
 routable_mtu=${OVN_ROUTABLE_MTU:-}
 
