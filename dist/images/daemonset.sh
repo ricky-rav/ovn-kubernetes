@@ -75,6 +75,7 @@ OVN_HOST_NETWORK_NAMESPACE=""
 OVN_EX_GW_NETWORK_INTERFACE=""
 OVNKUBE_NODE_MGMT_PORT_NETDEV=""
 OVNKUBE_CONFIG_DURATION_ENABLE=
+AFTER_INITIAL_SETUP=
 
 # Parse parameters given as arguments to this script.
 while [ "$1" != "" ]; do
@@ -249,6 +250,10 @@ while [ "$1" != "" ]; do
   --ovnkube-config-duration-enable)
     OVNKUBE_CONFIG_DURATION_ENABLE=$VALUE
     ;;
+  --after-initial-setup)
+    AFTER_INITIAL_SETUP=true
+    ;;
+
   *)
     echo "WARNING: unknown parameter \"$PARAM\""
     exit 1
@@ -513,15 +518,18 @@ svc_cidr=${OVN_SVC_CIDR:-"172.30.0.0/16"}
 k8s_apiserver=${OVN_K8S_APISERVER:-"10.0.2.16:6443"}
 mtu=${OVN_MTU:-1400}
 host_network_namespace=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
+after_initial_setup=${AFTER_INITIAL_SETUP:-false}
 echo "net_cidr: ${net_cidr}"
 echo "svc_cidr: ${svc_cidr}"
 echo "k8s_apiserver: ${k8s_apiserver}"
 echo "mtu: ${mtu}"
 echo "host_network_namespace: ${host_network_namespace}"
+echo "after_initial_setup: ${after_initial_setup}"
 
 net_cidr=${net_cidr} svc_cidr=${svc_cidr} \
   mtu_value=${mtu} k8s_apiserver=${k8s_apiserver} \
-  host_network_namespace=${host_network_namespace}	\
+  host_network_namespace=${host_network_namespace} \
+  after_initial_setup=${after_initial_setup} \
   j2 ../templates/ovn-setup.yaml.j2 -o ${output_dir}/ovn-setup.yaml
 
 cp ../templates/ovnkube-monitor.yaml.j2 ${output_dir}/ovnkube-monitor.yaml
