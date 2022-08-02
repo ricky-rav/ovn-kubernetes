@@ -1,0 +1,5 @@
+gitlab 2a76b7e5 merge with upstream da607b409
+removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27a827524a45badb427d8863d2
+comment out commit https://github.com/ovn-org/ovn-kubernetes/commit/944b5c2f606b06c0a82624a9dea5a9fc4e7d4124
+remove nbctld daemon from ovnkube-master pod commit https://github.com/ovn-org/ovn-kubernetes/commit/ade3f1ecfe506eeaf685dbf13b66bb7e27cbab97
+
