@@ -21,6 +21,7 @@ import (
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	retry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -203,28 +204,28 @@ type Controller struct {
 	v6HostSubnetsUsed float64
 
 	// Objects for pods that need to be retried
-	retryPods *RetryObjs
+	retryPods *retry.RetryFramework
 
 	// Objects for network policies that need to be retried
-	retryNetworkPolicies *RetryObjs
+	retryNetworkPolicies *retry.RetryFramework
 
 	// Objects for egress firewall that need to be retried
-	retryEgressFirewalls *RetryObjs
+	retryEgressFirewalls *retry.RetryFramework
 
 	// Objects for egress IP that need to be retried
-	retryEgressIPs *RetryObjs
+	retryEgressIPs *retry.RetryFramework
 	// Objects for egress IP Namespaces that need to be retried
-	retryEgressIPNamespaces *RetryObjs
+	retryEgressIPNamespaces *retry.RetryFramework
 	// Objects for egress IP Pods that need to be retried
-	retryEgressIPPods *RetryObjs
+	retryEgressIPPods *retry.RetryFramework
 	// Objects for Egress nodes that need to be retried
-	retryEgressNodes *RetryObjs
+	retryEgressNodes *retry.RetryFramework
 	// EgressIP Node-specific syncMap used by egressip node event handler
 	addEgressNodeFailed sync.Map
 	// Objects for nodes that need to be retried
-	retryNodes *RetryObjs
+	retryNodes *retry.RetryFramework
 	// Objects for Cloud private IP config that need to be retried
-	retryCloudPrivateIPConfig *RetryObjs
+	retryCloudPrivateIPConfig *retry.RetryFramework
 	// Node-specific syncMap used by node event handler
 	gatewaysFailed              sync.Map
 	mgmtPortFailed              sync.Map
@@ -312,28 +313,42 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory, st
 			egressIPTotalTimeout:              config.OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout,
 			egressIPNodeHealthCheckPort:       config.OVNKubernetesFeature.EgressIPNodeHealthCheckPort,
 		},
-		loadbalancerClusterCache:  make(map[kapi.Protocol]string),
-		multicastSupport:          config.EnableMulticast,
-		loadBalancerGroupUUID:     "",
-		aclLoggingEnabled:         true,
-		joinSwIPManager:           nil,
-		retryPods:                 NewRetryObjs(factory.PodType, "", nil, nil, nil),
-		retryNetworkPolicies:      NewRetryObjs(factory.PolicyType, "", nil, nil, nil),
-		retryNodes:                NewRetryObjs(factory.NodeType, "", nil, nil, nil),
-		retryEgressFirewalls:      NewRetryObjs(factory.EgressFirewallType, "", nil, nil, nil),
-		retryEgressIPs:            NewRetryObjs(factory.EgressIPType, "", nil, nil, nil),
-		retryEgressIPNamespaces:   NewRetryObjs(factory.EgressIPNamespaceType, "", nil, nil, nil),
-		retryEgressIPPods:         NewRetryObjs(factory.EgressIPPodType, "", nil, nil, nil),
-		retryEgressNodes:          NewRetryObjs(factory.EgressNodeType, "", nil, nil, nil),
-		retryCloudPrivateIPConfig: NewRetryObjs(factory.CloudPrivateIPConfigType, "", nil, nil, nil),
-		recorder:                  recorder,
-		nbClient:                  libovsdbOvnNBClient,
-		sbClient:                  libovsdbOvnSBClient,
-		svcController:             svcController,
-		svcFactory:                svcFactory,
+		loadbalancerClusterCache: make(map[kapi.Protocol]string),
+		multicastSupport:         config.EnableMulticast,
+		loadBalancerGroupUUID:    "",
+		aclLoggingEnabled:        true,
+		joinSwIPManager:          nil,
+		// retryPods:                 oc.newRetryFrameworkMaster(factory.PodType, "", nil, nil, nil),
+		// retryNetworkPolicies:      oc.newRetryFrameworkMaster(factory.PolicyType, "", nil, nil, nil),
+		// retryNodes:                oc.newRetryFrameworkMaster(factory.NodeType, "", nil, nil, nil),
+		// retryEgressFirewalls:      oc.newRetryFrameworkMaster(factory.EgressFirewallType, "", nil, nil, nil),
+		// retryEgressIPs:            oc.newRetryFrameworkMaster(factory.EgressIPType, "", nil, nil, nil),
+		// retryEgressIPNamespaces:   oc.newRetryFrameworkMaster(factory.EgressIPNamespaceType, "", nil, nil, nil),
+		// retryEgressIPPods:         oc.newRetryFrameworkMaster(factory.EgressIPPodType, "", nil, nil, nil),
+		// retryEgressNodes:          oc.newRetryFrameworkMaster(factory.EgressNodeType, "", nil, nil, nil),
+		// retryCloudPrivateIPConfig: oc.newRetryFrameworkMaster(factory.CloudPrivateIPConfigType, "", nil, nil, nil),
+		recorder:      recorder,
+		nbClient:      libovsdbOvnNBClient,
+		sbClient:      libovsdbOvnSBClient,
+		svcController: svcController,
+		svcFactory:    svcFactory,
 		egressSvcController:       egressSvcController,
-		podRecorder:               metrics.NewPodRecorder(),
+		podRecorder:   metrics.NewPodRecorder(),
 	}
+
+	// Init the retry framework for pods, network policies, nodes, egress firewalls, egress IP and the
+	// resources it watches (namespaces, pods, nodes), cloud private ip config.
+	oc.retryPods = oc.newRetryFrameworkMaster(factory.PodType, "", nil, nil, nil)
+	oc.retryNetworkPolicies = oc.newRetryFrameworkMaster(factory.PolicyType, "", nil, nil, nil)
+	oc.retryNodes = oc.newRetryFrameworkMaster(factory.NodeType, "", nil, nil, nil)
+	oc.retryEgressFirewalls = oc.newRetryFrameworkMaster(factory.EgressFirewallType, "", nil, nil, nil)
+	oc.retryEgressIPs = oc.newRetryFrameworkMaster(factory.EgressIPType, "", nil, nil, nil)
+	oc.retryEgressIPNamespaces = oc.newRetryFrameworkMaster(factory.EgressIPNamespaceType, "", nil, nil, nil)
+	oc.retryEgressIPPods = oc.newRetryFrameworkMaster(factory.EgressIPPodType, "", nil, nil, nil)
+	oc.retryEgressNodes = oc.newRetryFrameworkMaster(factory.EgressNodeType, "", nil, nil, nil)
+	oc.retryCloudPrivateIPConfig = oc.newRetryFrameworkMaster(factory.CloudPrivateIPConfigType, "", nil, nil, nil)
+
+	return oc
 }
 
 // Run starts the actual watching.
@@ -575,35 +590,35 @@ func (oc *Controller) removePod(pod *kapi.Pod, portInfo *lpInfo) error {
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic
 func (oc *Controller) WatchPods() error {
-	_, err := oc.WatchResource(oc.retryPods)
+	_, err := oc.retryPods.WatchResource()
 	return err
 }
 
 // WatchNetworkPolicy starts the watching of the network policy resource and calls
 // back the appropriate handler logic
 func (oc *Controller) WatchNetworkPolicy() error {
-	_, err := oc.WatchResource(oc.retryNetworkPolicies)
+	_, err := oc.retryNetworkPolicies.WatchResource()
 	return err
 }
 
 // WatchEgressFirewall starts the watching of egressfirewall resource and calls
 // back the appropriate handler logic
 func (oc *Controller) WatchEgressFirewall() error {
-	_, err := oc.WatchResource(oc.retryEgressFirewalls)
+	_, err := oc.retryEgressFirewalls.WatchResource()
 	return err
 }
 
 // WatchEgressNodes starts the watching of egress assignable nodes and calls
 // back the appropriate handler logic.
 func (oc *Controller) WatchEgressNodes() error {
-	_, err := oc.WatchResource(oc.retryEgressNodes)
+	_, err := oc.retryEgressNodes.WatchResource()
 	return err
 }
 
 // WatchCloudPrivateIPConfig starts the watching of cloudprivateipconfigs
 // resource and calls back the appropriate handler logic.
 func (oc *Controller) WatchCloudPrivateIPConfig() error {
-	_, err := oc.WatchResource(oc.retryCloudPrivateIPConfig)
+	_, err := oc.retryCloudPrivateIPConfig.WatchResource()
 	return err
 }
 
@@ -611,17 +626,17 @@ func (oc *Controller) WatchCloudPrivateIPConfig() error {
 // appropriate handler logic. It also initiates the other dedicated resource
 // handlers for egress IP setup: namespaces, pods.
 func (oc *Controller) WatchEgressIP() error {
-	_, err := oc.WatchResource(oc.retryEgressIPs)
+	_, err := oc.retryEgressIPs.WatchResource()
 	return err
 }
 
 func (oc *Controller) WatchEgressIPNamespaces() error {
-	_, err := oc.WatchResource(oc.retryEgressIPNamespaces)
+	_, err := oc.retryEgressIPNamespaces.WatchResource()
 	return err
 }
 
 func (oc *Controller) WatchEgressIPPods() error {
-	_, err := oc.WatchResource(oc.retryEgressIPPods)
+	_, err := oc.retryEgressIPPods.WatchResource()
 	return err
 }
 
@@ -690,7 +705,7 @@ func (oc *Controller) syncNodeGateway(node *kapi.Node, hostSubnets []*net.IPNet)
 // WatchNodes starts the watching of node resource and calls
 // back the appropriate handler logic
 func (oc *Controller) WatchNodes() error {
-	_, err := oc.WatchResource(oc.retryNodes)
+	_, err := oc.retryNodes.WatchResource()
 	return err
 }
 
@@ -782,7 +797,7 @@ func nodeChassisChanged(oldNode, node *kapi.Node) bool {
 	return oldChassis != newChassis
 }
 
-// noHostSubnet() compares the no-hostsubenet-nodes flag with node labels to see if the node is manageing its
+// noHostSubnet() compares the no-hostsubnet-nodes flag with node labels to see if the node is managing its
 // own network.
 func noHostSubnet(node *kapi.Node) bool {
 	if config.Kubernetes.NoHostSubnetNodes == nil {
