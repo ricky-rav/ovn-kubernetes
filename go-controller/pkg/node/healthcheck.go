@@ -18,9 +18,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// initLoadBalancerHealthChecker initializes the health check server for
-// ServiceTypeLoadBalancer services
-
 type loadBalancerHealthChecker struct {
 	sync.Mutex
 	nodeName  string
@@ -34,7 +31,7 @@ func newLoadBalancerHealthChecker(nodeName string) *loadBalancerHealthChecker {
 		nodeName:  nodeName,
 		server:    healthcheck.NewServer(nodeName, nil, nil, nil),
 		services:  make(map[ktypes.NamespacedName]uint16),
-		endpoints: make(map[ktypes.NamespacedName]int),
+		endpoints: make(map[ktypes.NamespacedName]int), // why not uint16?
 	}
 }
 

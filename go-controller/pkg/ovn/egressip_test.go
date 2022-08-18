@@ -10,11 +10,14 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	retry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/urfave/cli/v2"
 	v1 "k8s.io/api/core/v1"
@@ -622,30 +625,33 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				time.Sleep(2 * (types.OVSDBTimeout + time.Second))
 				// check to see if the retry cache has an entry
 				key1 := node1.Name
-				checkRetryObjectEventually(key1, true, fakeOvn.controller.retryEgressNodes)
-				retryEntry, found := getRetryObj(key1, fakeOvn.controller.retryEgressNodes)
-				gomega.Expect(found).To(gomega.BeTrue())
-				ginkgo.By("retry entry new obj be nil")
-				gomega.Expect(retryEntry.newObj).To(gomega.BeNil())
-				ginkgo.By("retry entry old obj should not be nil")
-				gomega.Expect(retryEntry.oldObj).NotTo(gomega.BeNil())
+				ginkgo.By("retry entry: old obj should not be nil, new obj should be nil")
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key1,
+					fakeOvn.controller.retryEgressNodes,
+					gomega.Not(gomega.BeNil()), // oldObj should not be nil
+					gomega.BeNil(),             // newObj should be nil
+				)
+
 				key2 := node2.Name
-				checkRetryObjectEventually(key2, true, fakeOvn.controller.retryEgressNodes)
-				retryEntry, found = getRetryObj(key2, fakeOvn.controller.retryEgressNodes)
-				gomega.Expect(found).To(gomega.BeTrue())
-				ginkgo.By("retry entry new obj should not be nil")
-				gomega.Expect(retryEntry.newObj).NotTo(gomega.BeNil())
-				ginkgo.By("retry entry config should not be nil")
-				gomega.Expect(retryEntry.config).NotTo(gomega.BeNil())
+				ginkgo.By("retry entry: new obj should not be nil, config should not be nil")
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key2,
+					fakeOvn.controller.retryEgressNodes,
+					nil,                        // oldObj is not looked up (TODO what value should it be?)
+					gomega.Not(gomega.BeNil()), // newObj should not be nil
+					gomega.Not(gomega.BeNil()), // config should not be nil
+				)
+
 				connCtx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				setRetryObjWithNoBackoff(key1, fakeOvn.controller.retryEgressNodes)
-				setRetryObjWithNoBackoff(key2, fakeOvn.controller.retryEgressNodes)
+				retry.SetRetryObjWithNoBackoff(key1, fakeOvn.controller.retryEgressNodes)
+				retry.SetRetryObjWithNoBackoff(key2, fakeOvn.controller.retryEgressNodes)
 				fakeOvn.controller.retryEgressNodes.RequestRetryObjs()
 				// check the cache no longer has the entry
-				checkRetryObjectEventually(key1, false, fakeOvn.controller.retryEgressNodes)
-				checkRetryObjectEventually(key2, false, fakeOvn.controller.retryEgressNodes)
+				retry.CheckRetryObjectEventually(key1, false, fakeOvn.controller.retryEgressNodes)
+				retry.CheckRetryObjectEventually(key2, false, fakeOvn.controller.retryEgressNodes)
 				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 				gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
 				egressIPs, _ = getEgressIPStatus(egressIPName)
@@ -1644,27 +1650,27 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				time.Sleep(types.OVSDBTimeout + time.Second)
 				// check to see if the retry cache has an entry
-				key := getNamespacedName(podUpdate.Namespace, podUpdate.Name)
-				gomega.Eventually(func() bool {
-					return checkRetryObj(key, fakeOvn.controller.retryEgressIPPods)
-				}, inspectTimeout).Should(gomega.BeTrue())
-				retryEntry, found := getRetryObj(key, fakeOvn.controller.retryEgressIPPods)
-				gomega.Expect(found).To(gomega.BeTrue())
-				ginkgo.By("retry entry new obj should not be nil")
-				gomega.Expect(retryEntry.newObj).NotTo(gomega.BeNil())
-				ginkgo.By("retry entry config should not be nil")
-				gomega.Expect(retryEntry.config).NotTo(gomega.BeNil())
+				var key string
+				key, err = retry.GetResourceKey(factory.EgressIPPodType, podUpdate)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				ginkgo.By("retry entry: new obj should not be nil, config should not be nil")
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryEgressIPPods,
+					nil,                        // oldObj is not looked up (TODO what value should it be?)
+					gomega.Not(gomega.BeNil()), // newObj should not be nil
+					gomega.Not(gomega.BeNil()), // config should not be nil
+				)
+
 				connCtx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
 
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressIPPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressIPPods)
 				fakeOvn.controller.retryEgressIPPods.RequestRetryObjs()
 				// check the cache no longer has the entry
-				gomega.Eventually(func() bool {
-					return checkRetryObj(key, fakeOvn.controller.retryEgressIPPods)
-				}, inspectTimeout).Should(gomega.BeFalse())
-				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(1))
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryEgressIPPods)
 
 				return nil
 			}
@@ -2258,19 +2264,17 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				// sleep long enough for TransactWithRetry to fail, causing egressnode operations to fail
 				time.Sleep(types.OVSDBTimeout + time.Second)
 				// check to see if the retry cache has an entry
-				key := eIP.Name
-				gomega.Eventually(func() bool {
-					return checkRetryObj(key, fakeOvn.controller.retryEgressIPs)
-				}, inspectTimeout).Should(gomega.BeTrue())
+				key := eIP.Name  // TODO use getResourceKey
+				retry.CheckRetryObjectEventually(key, true, fakeOvn.controller.retryEgressIPs)
+
 				connCtx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressIPs)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressIPs)
 				fakeOvn.controller.retryEgressIPs.RequestRetryObjs()
 				// check the cache no longer has the entry
-				gomega.Eventually(func() bool {
-					return checkRetryObj(key, fakeOvn.controller.retryEgressIPs)
-				}, inspectTimeout).Should(gomega.BeFalse())
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryEgressIPs)
+
 				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(1))
 
 				expectedNatLogicalPort := "k8s-node2"
@@ -3319,13 +3323,14 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				time.Sleep(2 * (types.OVSDBTimeout + time.Second))
 				// check to see if the retry cache has an entry
 				key := node.Name
-				checkRetryObjectEventually(key, true, fakeOvn.controller.retryEgressNodes)
-				retryEntry, found := getRetryObj(key, fakeOvn.controller.retryEgressNodes)
-				gomega.Expect(found).To(gomega.BeTrue())
-				ginkgo.By("retry entry new obj should not be nil")
-				gomega.Expect(retryEntry.newObj).NotTo(gomega.BeNil())
-				ginkgo.By("retry entry old obj should be nil")
-				gomega.Expect(retryEntry.oldObj).To(gomega.BeNil())
+				retry.CheckRetryObjectEventually(key, true, fakeOvn.controller.retryEgressNodes)
+				ginkgo.By("retry entry: old obj should be nil,  new obj should not be nil")
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryEgressNodes,
+					gomega.BeNil(),             // oldObj should be nil
+					gomega.Not(gomega.BeNil()), // newObj should not be nil
+				)
 
 				node.Labels = map[string]string{}
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
@@ -3333,10 +3338,10 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations", func() {
 				connCtx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressNodes)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressNodes)
 				fakeOvn.controller.retryEgressNodes.RequestRetryObjs()
 				// check the cache no longer has the entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryEgressNodes)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryEgressNodes)
 				gomega.Eventually(getEgressIPAllocatorSizeSafely).Should(gomega.Equal(1))
 				gomega.Expect(fakeOvn.controller.eIPC.allocator.cache).To(gomega.HaveKey(node.Name))
 				gomega.Expect(fakeOvn.controller.eIPC.allocator.cache[node.Name].egressIPConfig.V4.Net).To(gomega.Equal(ipV4Sub))

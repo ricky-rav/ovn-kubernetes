@@ -382,6 +382,8 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 type AddHandlerFuncType func(namespace string, sel labels.Selector, funcs cache.ResourceEventHandler, processExisting func([]interface{}) error) (*Handler, error)
 
 func (wf *WatchFactory) GetResourceHandlerFunc(objType reflect.Type) (AddHandlerFuncType, error) {
+	// TODO this should be valid for both node and master watch factories
+	// So add here the resource types used by ovnk node
 	switch objType {
 	case PolicyType:
 		return func(namespace string, sel labels.Selector,
