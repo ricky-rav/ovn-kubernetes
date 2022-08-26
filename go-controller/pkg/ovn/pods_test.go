@@ -14,6 +14,7 @@ import (
 	ovstypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	retry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -434,10 +435,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
 				}, 2).Should(gomega.HaveLen(0))
-
-				myPod2Key, err := getResourceKey(factory.PodType, myPod2)
+				myPod2Key, err := retry.GetResourceKey(factory.PodType, myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				checkRetryObjectEventually(myPod2Key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(myPod2Key, true, fakeOvn.controller.retryPods)
 
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(getExpectedDataPodsAndSwitches([]testPod{t}, []string{"node1"})))
 				ginkgo.By("Marking myPod as completed should free IP")
@@ -455,15 +455,14 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				}, 2).Should(gomega.BeTrue())
 
 				ginkgo.By("Freed IP should now allow mypod2 to come up")
-				key, err := getResourceKey(factory.PodType, myPod2)
+				key, err := retry.GetResourceKey(factory.PodType, myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
-				// there should also be no entry for this pod in the retry cache
-				gomega.Eventually(func() bool {
-					return checkRetryObj(myPod2Key, fakeOvn.controller.retryPods)
-				}, retryObjInterval+time.Second).Should(gomega.BeFalse())
+
+				retry.CheckRetryObjectEventually(myPod2Key, false, fakeOvn.controller.retryPods)
+
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
 				}, 2).Should(gomega.MatchJSON(t2.getAnnotationsJson()))
@@ -541,9 +540,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
 				}, 2).Should(gomega.HaveLen(0))
 
-				myPod2Key, err := getResourceKey(factory.PodType, myPod2)
+				myPod2Key, err := retry.GetResourceKey(factory.PodType, myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				checkRetryObjectEventually(myPod2Key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(myPod2Key, true, fakeOvn.controller.retryPods)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(getExpectedDataPodsAndSwitches([]testPod{t}, []string{"node1"})))
 				ginkgo.By("Marking myPod as completed should free IP")
 				myPod.Status.Phase = v1.PodSucceeded
@@ -560,15 +559,13 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				}, 2).Should(gomega.BeTrue())
 
 				ginkgo.By("Freed IP should now allow mypod2 to come up")
-				key, err := getResourceKey(factory.PodType, myPod2)
+				key, err := retry.GetResourceKey(factory.PodType, myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
 				// there should also be no entry for this pod in the retry cache
-				gomega.Eventually(func() bool {
-					return checkRetryObj(myPod2Key, fakeOvn.controller.retryPods)
-				}, retryObjInterval+time.Second).Should(gomega.BeFalse())
+				retry.CheckRetryObjectEventually(myPod2Key, false, fakeOvn.controller.retryPods)
 
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
@@ -627,9 +624,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				}, 2).Should(gomega.HaveLen(0))
 
 				// should be in retry because there are no more IPs left
-				myPod3Key, err := getResourceKey(factory.PodType, myPod3)
+				myPod3Key, err := retry.GetResourceKey(factory.PodType, myPod3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				checkRetryObjectEventually(myPod3Key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(myPod3Key, true, fakeOvn.controller.retryPods)
 				// TODO validate that the pods also have correct GW SNATs and route policies
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(getExpectedDataPodsAndSwitches([]testPod{t2}, []string{"node1"})))
 				return nil
@@ -724,21 +721,21 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				err = fakeOvn.controller.ensurePod(nil, podObj, true) // this fails since pod doesn't exist to set annotations
 				gomega.Expect(err).To(gomega.HaveOccurred())
 
-				key, err := getResourceKey(factory.PodType, podObj)
+				key, err := retry.GetResourceKey(factory.PodType, podObj)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Expect(retryObjsLen(fakeOvn.controller.retryPods)).To(gomega.Equal(0))
-				initRetryObjWithAdd(podObj, key, fakeOvn.controller.retryPods)
-				gomega.Expect(retryObjsLen(fakeOvn.controller.retryPods)).To(gomega.Equal(1))
-				gomega.Expect(checkRetryObj(key, fakeOvn.controller.retryPods)).To(gomega.BeTrue())
-				retryEntry, found := getRetryObj(key, fakeOvn.controller.retryPods)
-				gomega.Expect(found).To(gomega.BeTrue())
-				storedPod, ok := retryEntry.newObj.(*v1.Pod)
+				gomega.Expect(retry.RetryObjsLen(fakeOvn.controller.retryPods)).To(gomega.Equal(0))
+				retry.InitRetryObjWithAdd(podObj, key, fakeOvn.controller.retryPods)
+				gomega.Expect(retry.RetryObjsLen(fakeOvn.controller.retryPods)).To(gomega.Equal(1))
+				gomega.Expect(retry.CheckRetryObj(key, fakeOvn.controller.retryPods)).To(gomega.BeTrue())
+				newObj := retry.GetNewObjFromRetryObj(key, fakeOvn.controller.retryPods)
+				storedPod, ok := newObj.(*v1.Pod)
 				gomega.Expect(ok).To(gomega.BeTrue())
 				gomega.Expect(storedPod.UID).To(gomega.Equal(podObj.UID))
 
-				deleteRetryObj(key, fakeOvn.controller.retryPods)
-				gomega.Expect(checkRetryObj(key, fakeOvn.controller.retryPods)).To(gomega.BeFalse())
+				retry.DeleteRetryObj(key, fakeOvn.controller.retryPods)
+				gomega.Expect(retry.CheckRetryObj(key, fakeOvn.controller.retryPods)).To(gomega.BeFalse())
+
 				return nil
 			}
 
@@ -761,7 +758,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				pod := newPod(podTest.namespace, podTest.podName, podTest.nodeName, podTest.podIP)
 
-				key, err := getResourceKey(factory.PodType, pod)
+				key, err := retry.GetResourceKey(factory.PodType, pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				fakeOvn.startWithDBSetup(initialDB,
@@ -794,13 +791,13 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				time.Sleep(ovstypes.OVSDBTimeout + time.Second)
 
 				// check to see if the pod retry cache has an entry for this policy
-				checkRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
 				connCtx, cancel := context.WithTimeout(context.Background(), ovstypes.OVSDBTimeout)
 
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
 				// reset backoff for immediate retry
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs() // retry the failed entry
 
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(context.TODO(), podTest.podName, metav1.GetOptions{})
@@ -809,7 +806,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getExpectedDataPodsAndSwitches([]testPod{podTest}, []string{"node1"})...))
 				// check the retry cache no longer has the entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 				return nil
 			}
 
@@ -832,7 +829,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				pod := newPod(podTest.namespace, podTest.podName, podTest.nodeName, podTest.podIP)
 				expectedData := []libovsdbtest.TestData{getExpectedDataPodsAndSwitches([]testPod{podTest}, []string{"node1"})}
-				key, err := getResourceKey(factory.PodType, pod)
+				key, err := retry.GetResourceKey(factory.PodType, pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				fakeOvn.startWithDBSetup(initialDB,
 					&v1.NamespaceList{
@@ -868,19 +865,19 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				time.Sleep(ovstypes.OVSDBTimeout + time.Second)
 
 				// check to see if the pod retry cache has an entry for this pod
-				checkRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
 				connCtx, cancel := context.WithTimeout(context.Background(), ovstypes.OVSDBTimeout)
 
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs() // retry the failed entry
 
 				fakeOvn.asf.ExpectEmptyAddressSet(podTest.namespace)
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getExpectedDataPodsAndSwitches([]testPod{}, []string{"node1"})...))
 				// check the retry cache no longer has the entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 				return nil
 			}
 
@@ -904,7 +901,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod := newPod(podTest.namespace, podTest.podName,
 					podTest.nodeName, podTest.podIP)
 
-				key, err := getResourceKey(factory.PodType, pod)
+				key, err := retry.GetResourceKey(factory.PodType, pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				fakeOvn.startWithDBSetup(initialDB,
@@ -936,28 +933,37 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				time.Sleep(ovstypes.OVSDBTimeout + time.Second)
 
 				// wait until retry entry appears
-				checkRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
 
 				// check that the retry entry is marked for creation
-				retryEntry, found := getRetryObj(key, fakeOvn.controller.retryPods)
-				gomega.Expect(found).To(gomega.BeTrue())
-				gomega.Expect(retryEntry.oldObj).To(gomega.BeNil())
-				gomega.Expect(retryEntry.newObj).ToNot(gomega.BeNil())
-				gomega.Expect(retryEntry.failedAttempts).To(gomega.Equal(uint8(1)))
-				// set failedAttempts to maxFailedAttempts-1, trigger a retry (which will fail due to nbdb being down)
-				// and verify that failedAttempts is now equal to maxFailedAttempts
-				setFailedAttemptsCounterForTestingOnly(key, maxFailedAttempts-1, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryPods,
+					gomega.BeNil(),                // oldObj should nil
+					gomega.Not(gomega.BeNil()),    // newObj should not be nil
+					nil,                           // skip config
+					gomega.BeNumerically("==", 1), // failedAttempts should be 1
+				)
+
+				// set failedAttempts to retry.MaxFailedAttempts-1, trigger a retry
+				// (which will fail due to nbdb being down)
+				// and verify that failedAttempts is now equal to retry.MaxFailedAttempts
+				retry.SetFailedAttemptsCounterForTestingOnly(key, retry.MaxFailedAttempts-1,
+					fakeOvn.controller.retryPods)
 				// reset backoff for immediate retry
-				setRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
-				gomega.Eventually(func() uint8 {
-					entry, found := getRetryObj(key, fakeOvn.controller.retryPods)
-					gomega.Expect(found).To(gomega.BeTrue())
-					return entry.failedAttempts
-				}).Should(gomega.Equal(uint8(maxFailedAttempts))) // no more retries are allowed
+
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryPods,
+					gomega.BeNil(),             // oldObj should nil
+					gomega.Not(gomega.BeNil()), // newObj should not be nil
+					nil,                        // skip config
+					gomega.BeNumerically("==", retry.MaxFailedAttempts), // failedAttempts should reach the max
+				)
 
 				// restore nbdb, trigger a retry and verify that the retry entry gets deleted
-				// because it reached maxFailedAttempts and the corresponding pod has NOT been added to OVN
+				// because it reached retry.MaxFailedAttempts and the corresponding pod has NOT been added to OVN
 				connCtx, cancel := context.WithTimeout(context.Background(), ovstypes.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
@@ -970,7 +976,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(pod).NotTo(gomega.BeNil())
 
 				// check that the retry cache no longer has the entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 
 				// check that pod doesn't appear in OVN
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
@@ -1000,7 +1006,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				expectedData := []libovsdbtest.TestData{getExpectedDataPodsAndSwitches(
 					[]testPod{podTest},
 					[]string{"node1"})}
-				key, err := getResourceKey(factory.PodType, pod)
+				key, err := retry.GetResourceKey(factory.PodType, pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				fakeOvn.startWithDBSetup(initialDB,
 					&v1.NamespaceList{
@@ -1039,28 +1045,33 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// sleep long enough for TransactWithRetry to fail, causing pod delete to fail
 				time.Sleep(ovstypes.OVSDBTimeout + time.Second)
 
-				// wait until retry entry appears
-				checkRetryObjectEventually(key, true, fakeOvn.controller.retryPods)
+				// wait until retry entry appears and check that it is marked for deletion
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryPods,
+					gomega.Not(gomega.BeNil()),    // oldObj should not be nil
+					gomega.BeNil(),                // newObj should be nil
+					nil,                           // skip config
+					gomega.BeNumerically("==", 1), // failedAttempts should be 1
+				)
 
-				// check that the retry entry is marked for deletion
-				retryEntry, found := getRetryObj(key, fakeOvn.controller.retryPods)
-				gomega.Expect(found).To(gomega.BeTrue())
-				gomega.Expect(retryEntry.oldObj).ToNot(gomega.BeNil())
-				gomega.Expect(retryEntry.newObj).To(gomega.BeNil())
-				gomega.Expect(retryEntry.failedAttempts).To(gomega.Equal(uint8(1)))
-
-				// set failedAttempts to maxFailedAttempts-1, trigger a retry (which will fail due to nbdb),
-				// check that failedAttempts is now equal to maxFailedAttempts
-				setFailedAttemptsCounterForTestingOnly(key, maxFailedAttempts-1, fakeOvn.controller.retryPods)
+				// set failedAttempts to retry.MaxFailedAttempts-1, trigger a retry (which will fail due to nbdb),
+				// check that failedAttempts is now equal to retry.MaxFailedAttempts
+				retry.SetFailedAttemptsCounterForTestingOnly(key, retry.MaxFailedAttempts-1,
+					fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
-				gomega.Eventually(func() uint8 {
-					entry, found := getRetryObj(key, fakeOvn.controller.retryPods)
-					gomega.Expect(found).To(gomega.BeTrue())
-					return entry.failedAttempts
-				}).Should(gomega.Equal(uint8(maxFailedAttempts))) // no more retries are allowed
+
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					key,
+					fakeOvn.controller.retryPods,
+					gomega.Not(gomega.BeNil()), // oldObj should not be nil
+					gomega.BeNil(),             // newObj should be nil
+					nil,                        // config is skipped
+					gomega.BeNumerically("==", retry.MaxFailedAttempts), // failedAttempts should be the max
+				)
 
 				// restore nbdb and verify that the retry entry gets deleted because it reached
-				// maxFailedAttempts and the corresponding pod has NOT been deleted from OVN
+				// retry.MaxFailedAttempts and the corresponding pod has NOT been deleted from OVN
 				connCtx, cancel := context.WithTimeout(context.Background(), ovstypes.OVSDBTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
@@ -1074,7 +1085,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(pod).To(gomega.BeNil())
 
 				// check that the retry cache no longer has the entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 
 				// check that the pod is still in OVN
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
@@ -1101,7 +1112,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				pod := newPod(podTest.namespace, podTest.podName, podTest.nodeName, podTest.podIP)
 				expectedData := []libovsdbtest.TestData{getExpectedDataPodsAndSwitches([]testPod{podTest}, []string{"node1"})}
-				key, err := getResourceKey(factory.PodType, pod)
+				key, err := retry.GetResourceKey(factory.PodType, pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				fakeOvn.startWithDBSetup(initialDB,
 					&v1.NamespaceList{
@@ -1149,7 +1160,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// check the retry cache has no entry
-				checkRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 				return nil
 			}
 
@@ -1705,9 +1716,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// should fail to update a port on the wrong switch
-				myPod1Key, err := getResourceKey(factory.PodType, pod1)
+				myPod1Key, err := retry.GetResourceKey(factory.PodType, pod1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				checkRetryObjectEventually(myPod1Key, true, fakeOvn.controller.retryPods)
+				retry.CheckRetryObjectEventually(myPod1Key, true, fakeOvn.controller.retryPods)
 
 				return nil
 			}

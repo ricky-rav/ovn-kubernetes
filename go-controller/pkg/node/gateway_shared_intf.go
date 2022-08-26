@@ -84,8 +84,8 @@ type serviceConfig struct {
 	hasLocalHostNetworkEp bool
 }
 
-// updateServiceFlowCache handles managing breth0 gateway flows for ingress traffic towards kubernetes services
-// (nodeport, external, ingress). By default incoming traffic into the node is steered directly into OVN (case3 below).
+// updateServiceFlowCache manages breth0 gateway flows for ingress traffic towards kubernetes services
+// (nodeport, external, ingress). By default incoming traffic into the node is steered directly into OVN (case2 below)
 //
 // case1: If a service has externalTrafficPolicy=local, and has host-networked endpoints local to the node (hasLocalHostNetworkEp),
 // traffic instead will be steered directly into the host and DNAT-ed to the targetPort on the host.
@@ -146,17 +146,20 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *kapi.Service, add, h
 				if isServiceTypeETPLocal && hasLocalHostNetworkEp {
 					// case1 (see function description for details)
 					var nodeportFlows []string
-					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s in Namespace: %s since ExternalTrafficPolicy=local", service.Name, service.Namespace)
+					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s in Namespace: %s since ExternalTrafficPolicy=local",
+						service.Name, service.Namespace)
 					// table 0, This rule matches on all traffic with dst port == NodePort, DNAT's the nodePort to the svc targetPort
 					// If ipv6 make sure to choose the ipv6 node address for rule
 					if strings.Contains(flowProtocol, "6") {
 						nodeportFlows = append(nodeportFlows,
 							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=[%s]:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, HostNodePortCTZone, npw.gatewayIPv6, svcPort.TargetPort.String()))
+								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, HostNodePortCTZone, npw.gatewayIPv6,
+								svcPort.TargetPort.String()))
 					} else {
 						nodeportFlows = append(nodeportFlows,
 							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=%s:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, HostNodePortCTZone, npw.gatewayIPv4, svcPort.TargetPort.String()))
+								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, HostNodePortCTZone, npw.gatewayIPv4,
+								svcPort.TargetPort.String()))
 					}
 					nodeportFlows = append(nodeportFlows,
 						// table 6, Sends the packet to the host. Note that the constant etp svc cookie is used since this flow would be
@@ -208,7 +211,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *kapi.Service, add, h
 }
 
 // createLbAndExternalSvcFlows handles managing breth0 gateway flows for ingress traffic towards kubernetes services
-// (externalIP and LoadBalancer types). By default incoming traffic into the node is steered directly into OVN (case3 below).
+// (externalIP and LoadBalancer types). By default incoming traffic into the node is steered directly into OVN (case2 below).
 //
 // case1: If a service has externalTrafficPolicy=local, and has host-networked endpoints local to the node (hasLocalHostNetworkEp),
 // traffic instead will be steered directly into the host and DNAT-ed to the targetPort on the host.
@@ -249,7 +252,7 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *kapi.Service, s
 		npw.ofm.deleteFlowsByKey(key)
 		return nil
 	}
-	// add the ARP bypass flow regarless of service type or gateway modes since its applicable in all scenarios.
+	// add the ARP bypass flow regardless of service type or gateway modes since its applicable in all scenarios.
 	arpFlow := npw.generateArpBypassFlow(protocol, externalIPOrLBIngressIP, cookie)
 	externalIPFlows := []string{arpFlow}
 	// This allows external traffic ingress when the svc's ExternalTrafficPolicy is
