@@ -1,11 +1,13 @@
 package addressset
 
 import (
-	"k8s.io/klog/v2"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -13,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
 )
 
@@ -135,6 +138,7 @@ func (f *FakeAddressSetFactory) expectAddressSetWithIPs(g gomega.Gomega, name st
 		defer as4.Unlock()
 		lenAddressSet = lenAddressSet + len(as4.ips)
 	}
+	ginkgo.By(fmt.Sprintf("[expectAddressSetWithIPs] name=%s, ips=%v, as4=%v", name, ips, as4))
 	as6 := f.getAddressSet(name6)
 	if as6 != nil {
 		defer as6.Unlock()
@@ -146,7 +150,12 @@ func (f *FakeAddressSetFactory) expectAddressSetWithIPs(g gomega.Gomega, name st
 			g.Expect(as6).NotTo(gomega.BeNil())
 			g.Expect(as6.ips).To(gomega.HaveKey(ip))
 		} else {
-			g.Expect(as4).NotTo(gomega.BeNil())
+			ginkgo.By(fmt.Sprintf("as4 should NOT be nil (isNil=%v)", as4 == nil))
+			g.Expect(as4).NotTo(gomega.BeNil()) // here it fails
+			ginkgo.By(fmt.Sprintf("as4 should have ip=%s as key", ip))
+			for k, v := range as4.ips {
+				ginkgo.By(fmt.Sprintf("as4.ips has key=%v, val=%v", k, v))
+			}
 			g.Expect(as4.ips).To(gomega.HaveKey(ip))
 		}
 	}

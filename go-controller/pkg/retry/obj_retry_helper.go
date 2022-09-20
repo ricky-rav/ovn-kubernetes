@@ -173,22 +173,22 @@ func CheckRetryObjectMultipleFieldsEventually(
 			expectedFailedAttempts = expectedParam
 		}
 	}
-	gomega.Eventually(func() {
+	gomega.Eventually(func(g gomega.Gomega) {
 		obj, exists := GetRetryObj(key, rf)
-		gomega.Expect(exists).To(gomega.BeTrue())
-		gomega.Expect(obj).NotTo(gomega.BeNil())
+		g.Expect(exists).To(gomega.BeTrue())
+		g.Expect(obj).NotTo(gomega.BeNil())
 		if exists {
 			if expectedOldObj != nil {
-				gomega.Expect(obj.oldObj).To(expectedOldObj)
+				g.Expect(obj.oldObj).To(expectedOldObj)
 			}
 			if expectedNewObj != nil {
-				gomega.Expect(obj.newObj).To(expectedNewObj)
+				g.Expect(obj.newObj).To(expectedNewObj)
 			}
 			if expectedConfig != nil {
-				gomega.Expect(obj.config).To(expectedConfig)
+				g.Expect(obj.config).To(expectedConfig)
 			}
 			if expectedFailedAttempts != nil {
-				gomega.Expect(obj.failedAttempts).To(expectedFailedAttempts)
+				g.Expect(obj.failedAttempts).To(expectedFailedAttempts)
 			}
 
 		}

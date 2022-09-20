@@ -84,12 +84,15 @@ func newGressPolicy(policyType knet.PolicyType, idx int, namespace, name string)
 }
 
 func (gp *gressPolicy) ensurePeerAddressSet(factory addressset.AddressSetFactory) error {
+	klog.Infof("[ensurePeerAddressSet]")
 	if gp.peerAddressSet != nil {
 		return nil
 	}
 
 	direction := strings.ToLower(string(gp.policyType))
 	asName := fmt.Sprintf("%s.%s.%s.%d", gp.policyNamespace, gp.policyName, direction, gp.idx)
+	klog.Infof("[ensurePeerAddressSet] asName=%v", asName)
+
 	as, err := factory.NewAddressSet(asName, nil)
 	if err != nil {
 		return err

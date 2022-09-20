@@ -256,10 +256,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
@@ -347,9 +349,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 				config.IPv6Mode = true
+
 				err := fakeOVN.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOVN.controller.WatchEgressFirewall()
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -555,8 +559,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),
@@ -585,7 +591,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 
 				gomega.Expect(fakeOVN.nbClient).To(libovsdbtest.HaveData(expectedDatabaseState))
 
-				err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
+				err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// ACL should be removed from switches after egfw is deleted
@@ -910,8 +916,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),
@@ -949,7 +957,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 					return fakeOVN.controller.nbClient.Connected()
 				}).Should(gomega.BeFalse())
 
-				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall1.Namespace).Update(context.TODO(), egressFirewall1, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1037,8 +1045,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for local gateway mode", 
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),
@@ -1294,10 +1304,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
@@ -1380,9 +1392,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 						},
 					})
 				config.IPv6Mode = true
+
 				err := fakeOVN.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOVN.controller.WatchEgressFirewall()
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1569,8 +1583,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),
@@ -1602,7 +1618,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 
 				gomega.Expect(fakeOVN.nbClient).To(libovsdbtest.HaveData(expectedDatabaseState))
 
-				err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
+				err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// join switch should return to orignal state, egfw was deleted
@@ -1666,8 +1682,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),
@@ -1698,7 +1716,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 
 				gomega.Expect(fakeOVN.nbClient).To(libovsdbtest.HaveData(expectedDatabaseState))
 
-				_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall1.Namespace).Update(context.TODO(), egressFirewall1, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1759,8 +1777,10 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations for shared gateway mode",
 						},
 					})
 
-				fakeOVN.controller.WatchNamespaces()
-				fakeOVN.controller.WatchEgressFirewall()
+				err := fakeOVN.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOVN.controller.WatchEgressFirewall()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ipv4ACL := libovsdbops.BuildACL(
 					buildEgressFwAclName("namespace1", t.EgressFirewallStartPriority),

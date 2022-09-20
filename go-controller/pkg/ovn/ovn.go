@@ -279,7 +279,7 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory, st
 	if config.HybridOverlay.Enabled {
 		hybridOverlaySubnetAllocator = subnetallocator.NewSubnetAllocator()
 	}
-	return &Controller{
+	oc := &Controller{
 		client: ovnClient.KubeClient,
 		kube: &kube.Kube{
 			KClient:              ovnClient.KubeClient,
@@ -327,17 +327,18 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory, st
 		// retryEgressIPPods:         oc.newRetryFrameworkMaster(factory.EgressIPPodType, "", nil, nil, nil),
 		// retryEgressNodes:          oc.newRetryFrameworkMaster(factory.EgressNodeType, "", nil, nil, nil),
 		// retryCloudPrivateIPConfig: oc.newRetryFrameworkMaster(factory.CloudPrivateIPConfigType, "", nil, nil, nil),
-		recorder:      recorder,
-		nbClient:      libovsdbOvnNBClient,
-		sbClient:      libovsdbOvnSBClient,
-		svcController: svcController,
-		svcFactory:    svcFactory,
-		egressSvcController:       egressSvcController,
-		podRecorder:   metrics.NewPodRecorder(),
+		recorder:            recorder,
+		nbClient:            libovsdbOvnNBClient,
+		sbClient:            libovsdbOvnSBClient,
+		svcController:       svcController,
+		svcFactory:          svcFactory,
+		egressSvcController: egressSvcController,
+		podRecorder:         metrics.NewPodRecorder(),
 	}
 
 	// Init the retry framework for pods, network policies, nodes, egress firewalls, egress IP and the
 	// resources it watches (namespaces, pods, nodes), cloud private ip config.
+	// MaYBE have the following inside a new function named initRetryForMaster? initRetryResourcesForMaster?
 	oc.retryPods = oc.newRetryFrameworkMaster(factory.PodType, "", nil, nil, nil)
 	oc.retryNetworkPolicies = oc.newRetryFrameworkMaster(factory.PolicyType, "", nil, nil, nil)
 	oc.retryNodes = oc.newRetryFrameworkMaster(factory.NodeType, "", nil, nil, nil)

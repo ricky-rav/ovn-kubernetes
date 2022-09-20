@@ -1503,9 +1503,11 @@ func (oc *Controller) destroyNetworkPolicy(np *networkPolicy, lastPolicy bool) e
 // selected as a peer by a NetworkPolicy's ingress/egress section to that
 // ingress/egress address set
 func (oc *Controller) handlePeerPodSelectorAddUpdate(gp *gressPolicy, objs ...interface{}) error {
+	klog.Infof("[handlePeerPodSelectorAddUpdate] gp=%v", gp)
 	pods := make([]*kapi.Pod, 0, len(objs))
 	for _, obj := range objs {
 		pod := obj.(*kapi.Pod)
+		klog.Infof("[handlePeerPodSelectorAddUpdate] pod=%v", pod)
 		if pod.Spec.NodeName == "" {
 			continue
 		}

@@ -601,16 +601,21 @@ func (oc *Controller) addResource(rf *retry.RetryFramework, obj interface{}, fro
 		return oc.handlePeerPodSelectorAddUpdate(extraParameters.gp, obj)
 
 	case factory.PeerNamespaceAndPodSelectorType:
+		klog.Infof("addResource for PeerNamespaceAndPodSelectorType")
+
 		extraParameters := rf.ExtraParameters.(*NetworkPolicyExtraParameters)
 		namespace := obj.(*kapi.Namespace)
 		extraParameters.np.RLock()
 		alreadyDeleted := extraParameters.np.deleted
 		extraParameters.np.RUnlock()
 		if alreadyDeleted {
+			klog.Infof("[add, PeerNamespaceAndPodSelectorType] alreadyDeleted")
 			return nil
 		}
 
 		// start watching pods in this namespace and selected by the label selector in extraParameters.podSelector
+		klog.Infof("[add, PeerNamespaceAndPodSelectorType] start watching pods in this namespace and selected by %v",
+			extraParameters.podSelector)
 		peerPodsRetryFramework := retry.NewRetryFramework(
 			factory.PeerPodForNamespaceAndPodSelectorType,
 			namespace.Name,
