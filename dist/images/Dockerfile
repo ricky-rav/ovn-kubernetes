@@ -8,32 +8,40 @@ ENV PYTHONDONTWRITEBYTECODE yes
 # Based on:OVS=2.17.1.58404de5.5f5afd00 OVN=22.03.0.e81e5b99.5f5afd00
 # Based on:OVS=2.17.1.58404de5.5f5afd00 OVN=22.03.0.e81e5b99.5f5afd00
 
-ARG OVS_REPO=ovs.repo
-ARG OVN_REPO=ovn.repo
-
-copy $OVS_REPO /etc/yum.repos.d/
-copy $OVN_REPO /etc/yum.repos.d/
-
 
 ARG K8S_VER
 ARG OVS_VER
 ARG OVN_VER
+
+ARG ARTIFACTORY_CERT
 
 # firewall-cmd wrappers
 COPY ./iptables-scripts/firewall-cmd /usr/bin/
 COPY kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 # install epel.repo
 RUN yum install -y epel-release
-RUN INSTALL_PKGS=" \
-	bind-utils procps-ng openssl numactl-libs \
-	libpcap iproute iputils strace socat unbound-libs python2 nmap\
+RUN echo -e "\
+[ovn-all-Artifactory] \n\
+name=ovn-all-Artifactory \n\
+baseurl=https://$ARTIFACTORY_CERT@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/ovn-all/8/x86_64/ \n\
+enabled=1 \n\
+gpgcheck=0" > /etc/yum.repos.d/ovn.repo &&\
+echo -e "\
+[ovs-all-Artifactory] \n\
+name=ovs-all-Artifactory \n\
+baseurl=https://$ARTIFACTORY_CERT@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovs/ovs-all/8/x86_64/ \n\
+enabled=1 \n\
+gpgcheck=0" > /etc/yum.repos.d/ovs.repo &&\
+INSTALL_PKGS=" \
+        bind-utils procps-ng openssl numactl-libs \
+        libpcap iproute iputils strace socat unbound-libs python2 nmap\
         " && \
-	yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
+        yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
     yum -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False update && \
     yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \
         kubectl$K8S_VER openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
     yum autoremove -y && \
-    yum clean all && rm -rf /var/cache/dnf/*
+    yum clean all && rm -rf /var/cache/dnf/* && rm -f /etc/yum.repos.d/ovn.repo /etc/yum.repos.d/ovs.repo
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
@@ -69,3 +77,4 @@ LABEL io.k8s.display-name="ovn-kubernetes" \
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
+
