@@ -1,7 +1,0 @@
-[ovn-sdn-21-L1-Artifactory]
-name=ovn-sdn-21-L1-Artifactory
-baseurl=https://sdn_ro:AKCp8jQwj6F1ZZZ8QuN26n3bVcvgYRHEns5aQZDeNsi3PE2f6nQ3YJpEYgxGqbhYcpyCU6bHy@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/21ovnL1/8/x86_64/
-enabled=1
-gpgcheck=0
-
-
