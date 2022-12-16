@@ -22,13 +22,13 @@ RUN yum install -y epel-release
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
 name=ovn-all-Artifactory \n\
-baseurl=https://$ARTIFACTORY_CERT@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/ovn-all/8/x86_64/ \n\
+baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/ovn-all/8/x86_64/ \n\
 enabled=1 \n\
 gpgcheck=0" > /etc/yum.repos.d/ovn.repo &&\
 echo -e "\
 [ovs-all-Artifactory] \n\
 name=ovs-all-Artifactory \n\
-baseurl=https://$ARTIFACTORY_CERT@edge.urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovs/ovs-all/8/x86_64/ \n\
+baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovs/ovs-all/8/x86_64/ \n\
 enabled=1 \n\
 gpgcheck=0" > /etc/yum.repos.d/ovs.repo &&\
 INSTALL_PKGS=" \
