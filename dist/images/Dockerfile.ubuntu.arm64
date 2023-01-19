@@ -18,7 +18,7 @@ ARG ARTIFACTORY_CERT
 USER root
 
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
-    iputils-ping software-properties-common util-linux apt-transport-https net-tools
+    iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap
 
 # Get ovn from Nvidia controlled source
 RUN echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
@@ -41,7 +41,7 @@ COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
 COPY ovnkube.sh /root/
-COPY ovndb-raft-functions.sh /root/
+COPY ovndb-raft-functions.sh ovnkube-node-probe.sh /root/
 # override the pkg's ovn_k8s.conf with this local copy
 COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
