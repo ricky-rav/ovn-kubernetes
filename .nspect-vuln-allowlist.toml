@@ -7,6 +7,6 @@ paths = ['test/e2e/vendor/k8s.io/apimachinery/pkg/', 'test/e2e/vendor/k8s.io/api
 comment = 'Exclude Podman package repos'
 
 [[oss.excluded.directories]]
-paths = ['vendor/github.com/vishvananda/', 'test/e2e/vendor/google.golang.org/protobuf/', 'go-controller/vendor/google.golang.org/protobuf/', 'go-controller/vendor/github.com/cpuguy83/']
+paths = ['vendor/github.com/vishvananda/', 'test/e2e/vendor/google.golang.org/protobuf/', 'test/e2e/vendor/github.com/golang/protobuf/', 'go-controller/vendor/google.golang.org/protobuf/', 'go-controller/vendor/github.com/russross/', 'go-controller/vendor/github.com/golang/protobuf/proto/', 'go-controller/vendor/github.com/cpuguy83/', 'test/e2e/vendor/github.com/cyphar/']
 comment = 'Exclude runc package repos'
 
