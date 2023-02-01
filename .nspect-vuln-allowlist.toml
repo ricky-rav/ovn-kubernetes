@@ -6,3 +6,7 @@ version = "1.0.0"
 paths = ['test/e2e/vendor/k8s.io/apimachinery/pkg/', 'test/e2e/vendor/k8s.io/api/', 'go-controller/vendor/k8s.io/apimachinery/pkg/', 'go-controller/vendor/k8s.io/api/']
 comment = 'Exclude Podman package repos'
 
+[[oss.excluded.directories]]
+paths = ['vendor/github.com/vishvananda/']
+comment = 'Exclude runc package repos'
+
