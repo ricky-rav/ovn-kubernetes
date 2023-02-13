@@ -216,6 +216,14 @@ func isEndpointReady(endpoint discovery.Endpoint) bool {
 	return endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready
 }
 
+func isEndpointServing(endpoint discovery.Endpoint) bool {
+	if endpoint.Conditions.Serving != nil {
+		return *endpoint.Conditions.Serving
+	} else {
+		return isEndpointReady(endpoint)
+	}
+}
+
 // checkForStaleOVSInternalPorts checks for OVS internal ports without any ofport assigned,
 // they are stale ports that must be deleted
 func checkForStaleOVSInternalPorts() {

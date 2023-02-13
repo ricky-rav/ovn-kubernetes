@@ -885,7 +885,7 @@ func (npw *nodePortWatcher) GetLocalEndpointAddresses(endpointSlices []*discover
 	localEndpoints := sets.NewString()
 	for _, endpointSlice := range endpointSlices {
 		for _, endpoint := range endpointSlice.Endpoints {
-			if isEndpointReady(endpoint) && endpoint.NodeName != nil && *endpoint.NodeName == npw.nodeIPManager.nodeName {
+			if isEndpointServing(endpoint) && endpoint.NodeName != nil && *endpoint.NodeName == npw.nodeIPManager.nodeName {
 				localEndpoints.Insert(endpoint.Addresses...)
 			}
 		}

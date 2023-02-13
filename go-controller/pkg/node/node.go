@@ -886,7 +886,7 @@ func doesEPSliceContainReadyEndpoint(epSlice *discovery.EndpointSlice,
 	epIP string, epPort int32, protocol kapi.Protocol) bool {
 	for _, port := range epSlice.Ports {
 		for _, endpoint := range epSlice.Endpoints {
-			if !isEndpointReady(endpoint) {
+			if !isEndpointServing(endpoint) {
 				continue
 			}
 			for _, ip := range endpoint.Addresses {
