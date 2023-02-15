@@ -34,6 +34,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/vishvananda/netlink"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
+	kubehc "k8s.io/kubernetes/pkg/proxy/healthcheck"
 )
 
 // OvnNode is the object holder for utilities meant for node management
@@ -47,6 +48,9 @@ type OvnNode struct {
 	recorder     record.EventRecorder
 	gateway      Gateway
 
+	// Node healthcheck server for cloud load balancers
+	healthzServer kubehc.ProxierHealthUpdater
+
 	// retry framework for namespaces, used for the removal of stale conntrack entries for external gateways
 	retryNamespaces *retry.RetryFramework
 	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
@@ -56,14 +60,16 @@ type OvnNode struct {
 // NewNode creates a new controller for node management
 func NewNode(kubeClient clientset.Interface, wf factory.NodeWatchFactory, name string,
 	stopChan chan struct{}, wg *sync.WaitGroup, eventRecorder record.EventRecorder) *OvnNode {
+
 	n := &OvnNode{
-		name:         name,
-		client:       kubeClient,
-		Kube:         &kube.Kube{KClient: kubeClient},
-		watchFactory: wf,
-		stopChan:     stopChan,
-		wg:           wg,
-		recorder:     eventRecorder,
+		name:          name,
+		client:        kubeClient,
+		Kube:          &kube.Kube{KClient: kubeClient},
+		watchFactory:  wf,
+		stopChan:      stopChan,
+		wg:            wg,
+		recorder:      eventRecorder,
+		healthzServer: newNodeProxyHealthzServer(name, eventRecorder),
 	}
 	n.initRetryFrameworkForNode()
 
@@ -647,6 +653,8 @@ func (n *OvnNode) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to watch endpointSlices: %w", err)
 		}
 	}
+
+	serveNodeProxyHealthz(n.healthzServer)
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
 		if err := n.watchPodsDPU(isOvnUpEnabled); err != nil {

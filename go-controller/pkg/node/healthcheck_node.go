@@ -6,13 +6,61 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/pkg/errors"
 
+	kapi "k8s.io/api/core/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 )
+
+// newNodeProxyHealthzServer creates and returns a new proxier health server
+// if the HealthzBindAddress configuration is set. Cloud load balancers use this
+// health check to determine if the node is available for services with ClusterIP
+// traffic policy.
+func newNodeProxyHealthzServer(nodeName string, eventRecorder record.EventRecorder) healthcheck.ProxierHealthUpdater {
+	if len(config.Kubernetes.HealthzBindAddress) == 0 {
+		return nil
+	}
+
+	nodeRef := &kapi.ObjectReference{
+		Kind:      "Node",
+		Name:      nodeName,
+		UID:       ktypes.UID(nodeName),
+		Namespace: "",
+	}
+	recorder := record.NewEventRecorderAdapter(eventRecorder)
+	return healthcheck.NewProxierHealthServer(config.Kubernetes.HealthzBindAddress, time.Minute, recorder, nodeRef)
+}
+
+// serveNodeProxyHealthz initializes and runs the healthz server. It will always
+// report healthy while the node process is running.
+// TODO: connect node health to something useful
+func serveNodeProxyHealthz(hz healthcheck.ProxierHealthUpdater) {
+	if hz == nil {
+		return
+	}
+
+	// Initialize the health check timers and never change them with
+	// QueuedUpdate, which makes the service always report healthy.
+	hz.Updated()
+	go wait.Until(func() {
+		if err := hz.Run(); err != nil {
+			klog.Errorf("Healthz server failed: %v", err)
+			// if in hardfail mode, never retry again
+			blockCh := make(chan error)
+			<-blockCh
+		} else {
+			klog.Errorf("Healthz server returned without error")
+		}
+	}, 5*time.Second, wait.NeverStop)
+}
 
 // checkForStaleOVSInternalPorts checks for OVS internal ports without any ofport assigned,
 // they are stale ports that must be deleted
