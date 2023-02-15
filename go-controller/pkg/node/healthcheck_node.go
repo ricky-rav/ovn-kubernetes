@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -25,8 +26,11 @@ import (
 // health check to determine if the node is available for services with ClusterIP
 // traffic policy.
 func newNodeProxyHealthzServer(nodeName string, eventRecorder record.EventRecorder) healthcheck.ProxierHealthUpdater {
+	healthzBindAddress := config.Kubernetes.HealthzBindAddress
 	if len(config.Kubernetes.HealthzBindAddress) == 0 {
-		return nil
+		// from  "k8s.io/kubernetes/pkg/cluster/ports"
+		// ProxyHealthzPort = 10256
+		healthzBindAddress = fmt.Sprintf("0.0.0.0:10256")
 	}
 
 	nodeRef := &kapi.ObjectReference{
@@ -36,7 +40,7 @@ func newNodeProxyHealthzServer(nodeName string, eventRecorder record.EventRecord
 		Namespace: "",
 	}
 	recorder := record.NewEventRecorderAdapter(eventRecorder)
-	return healthcheck.NewProxierHealthServer(config.Kubernetes.HealthzBindAddress, time.Minute, recorder, nodeRef)
+	return healthcheck.NewProxierHealthServer(healthzBindAddress, time.Minute, recorder, nodeRef)
 }
 
 // serveNodeProxyHealthz initializes and runs the healthz server. It will always
