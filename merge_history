@@ -6,10 +6,7 @@ and some ovs metrics commits are not merged
 add fix to fix retry deadlock
 
 
-cherry-pick nv-bf2-ovn-kubernetes branch up to commit 13cca6b09e73ce09bb3e69563af91e78ac31d894
-pending cherry-picking:
-ba9d47637 Delete chassis_private record when deleteing chassis record
-83cbf3277 [sdn-1742][sdn-1769] virtualIP and adminPBR APIs
+cherry-pick nv-bf2-ovn-kubernetes branch up to commit 7c0f9758c
 
 nv-master should not need:
 7a87a4667 further fix for SDN-1656, always get the pods on the nodes
