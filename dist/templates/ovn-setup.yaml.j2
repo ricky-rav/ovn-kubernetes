@@ -19,7 +19,7 @@ metadata:
 #
 # Setup for Kubernetes to support the ovn-kubernetes plugin
 #
-# Create the service account and policies.
+# Create service accounts and policies.
 # ovnkube interacts with kubernetes and the environment
 # must be properly set up.
 # 
@@ -33,7 +33,42 @@ metadata:
   namespace: ovn-kubernetes
 {%- endif %}
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-master
+  namespace: ovn-kubernetes
 
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-node
+  namespace: ovn-kubernetes
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-node-dpu-host
+  namespace: ovn-kubernetes
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-db
+  namespace: ovn-kubernetes
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ovn-misc
+  namespace: ovn-kubernetes
+
+---
+# Role with broad permissions for all ovn components
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -102,6 +137,129 @@ rules:
   verbs: ["list", "get", "watch"]
 
 ---
+# RBAC policies for ovnk8s-master
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovn-master
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - nodes
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - services
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - extensions
+  - networking.k8s.io
+  - apps
+  resources:
+  - networkpolicies
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - ""
+  resources:
+  - events
+  - configmaps
+  verbs: ["create", "patch", "update"]
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - egressfirewalls
+  - egressips
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups:
+  - k8s.cni.cncf.io
+  resources:
+  - network-attachment-definitions
+  - multi-networkpolicies
+  verbs: ["get", "list", "watch"]
+
+---
+# RBAC policies for ovnk8s-node and ovnk8s-node-dpu
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovn-node
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs: ["get", "list", "watch", "update"]
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs: ["get", "list", "watch", "patch"]
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - namespaces
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs: ["create", "patch", "update"]
+- apiGroups:
+  - k8s.cni.cncf.io
+  resources:
+  - network-attachment-definitions
+  verbs: ["get", "list", "watch"]
+
+---
+# RBAC policies for ovnk8s-node-dpu-host
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ovn-node-dpu-host
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs: ["get"]
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs: ["get", "list", "watch", "update"]
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - namespaces
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs: ["create", "patch", "update"]
+
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -116,7 +274,48 @@ subjects:
   namespace: ovn-kubernetes
 
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovn-master
+roleRef:
+  name: ovn-master
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ovn-master
+  namespace: ovn-kubernetes
 
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovn-node
+roleRef:
+  name: ovn-node
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ovn-node
+  namespace: ovn-kubernetes
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ovn-node-dpu-host
+roleRef:
+  name: ovn-node-dpu-host
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ovn-node-dpu-host
+  namespace: ovn-kubernetes
+
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -137,6 +336,44 @@ rules:
   - update
 
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ovn-kubernetes
+  name: ovn-k8s-endpoints
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs: ["get"]
+
+---
+# RBAC policies for ovnkube-db, ovn-nbdb-raft and ovn-sbdb-raft
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ovn-kubernetes
+  name: ovn-db
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources:
+  - endpoints
+  verbs: ["get", "create"]
+- apiGroups:
+  - extensions
+  - networking.k8s.io
+  - apps
+  resources:
+  - statefulsets
+  verbs: ["get"]
+
+---
 
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -150,6 +387,64 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: ovn
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-master
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-node
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-node-dpu-host
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-db
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-misc
+  namespace: ovn-kubernetes
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: only-ovnk8s-endpoints
+  namespace: ovn-kubernetes
+roleRef:
+  name: ovn-k8s-endpoints
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ovn
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-master
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-node
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-node-dpu-host
+  namespace: ovn-kubernetes
+- kind: ServiceAccount
+  name: ovn-misc
+  namespace: ovn-kubernetes
+
+---
+# RBAC role binding for ovnkube-db, ovn-sbdb-raft and ovn-nbdb-raft
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ovn-db
+  namespace: ovn-kubernetes
+roleRef:
+  name: ovn-db
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ovn-db
   namespace: ovn-kubernetes
 
 {% if in_upgrade != "true" -%}
