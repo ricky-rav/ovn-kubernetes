@@ -123,6 +123,8 @@ rules:
   - adminpolicybasedroutes/status
   - virtualips
   - virtualips/status
+  - ipreservations
+  - ipreservations/status
   verbs: ["list", "get", "watch", "update", "patch"]
 - apiGroups:
   - apiextensions.k8s.io
@@ -186,6 +188,8 @@ rules:
   - adminpolicybasedroutes/status
   - virtualips
   - virtualips/status
+  - ipreservations
+  - ipreservations/status
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups:
   - k8s.cni.cncf.io
