@@ -119,6 +119,10 @@ rules:
   - egressfirewalls
   - egressips
   - egressqoses
+  - adminpolicybasedroutes
+  - adminpolicybasedroutes/status
+  - virtualips
+  - virtualips/status
   verbs: ["list", "get", "watch", "update", "patch"]
 - apiGroups:
   - apiextensions.k8s.io
@@ -178,6 +182,10 @@ rules:
   resources:
   - egressfirewalls
   - egressips
+  - adminpolicybasedroutes
+  - adminpolicybasedroutes/status
+  - virtualips
+  - virtualips/status
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups:
   - k8s.cni.cncf.io
