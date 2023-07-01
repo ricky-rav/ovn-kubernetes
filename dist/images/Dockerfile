@@ -38,7 +38,7 @@ INSTALL_PKGS=" \
         yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
     yum -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False update && \
     yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \
-        kubectl$K8S_VER openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
+        kubectl$K8S_VER python3-openvswitch$OVS_VER-1.el8.noarch openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
     yum autoremove -y && \
     yum clean all && rm -rf /var/cache/dnf/* && rm -f /etc/yum.repos.d/ovn.repo /etc/yum.repos.d/ovs.repo
 
