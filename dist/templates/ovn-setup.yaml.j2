@@ -68,81 +68,6 @@ metadata:
   namespace: ovn-kubernetes
 
 ---
-# Role with broad permissions for all ovn components
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: ovn-kubernetes
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  - namespaces
-  - nodes
-  - endpoints
-  - services
-  verbs: ["get", "list", "watch"]
-- apiGroups:
-  - extensions
-  - networking.k8s.io
-  - apps
-  resources:
-  - networkpolicies
-  - statefulsets
-  verbs: ["get", "list", "watch"]
-- apiGroups:
-  - discovery.k8s.io
-  resources:
-  - endpointslices
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - events
-  - endpoints
-  - configmaps
-  verbs: ["create", "patch", "update"]
-- apiGroups:
-  - ""
-  resources:
-  - namespaces
-  - nodes
-  - pods
-  verbs: ["patch", "update"]
-- apiGroups:
-  - k8s.ovn.org
-  resources:
-  - egressfirewalls
-  - egressips
-  - egressqoses
-  - adminpolicybasedroutes
-  - adminpolicybasedroutes/status
-  - virtualips
-  - virtualips/status
-  - ipreservations
-  - ipreservations/status
-  verbs: ["list", "get", "watch", "update", "patch"]
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs: ["list", "get", "watch"]
-- apiGroups:
-  - k8s.cni.cncf.io
-  resources:
-  - network-attachment-definitions
-  verbs: ["list", "get", "watch"]
-- apiGroups:
-  - k8s.cni.cncf.io
-  resources:
-  - multi-networkpolicies
-  verbs: ["list", "get", "watch"]
-
----
 # RBAC policies for ovnk8s-master
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -173,12 +98,6 @@ rules:
   resources:
   - endpointslices
   verbs: ["get", "list", "watch"]
-- apiGroups:
-  - ""
-  resources:
-  - events
-  - configmaps
-  verbs: ["create", "patch", "update"]
 - apiGroups:
   - k8s.ovn.org
   resources:
@@ -227,11 +146,6 @@ rules:
   - endpointslices
   verbs: ["get", "list", "watch"]
 - apiGroups:
-  - ""
-  resources:
-  - events
-  verbs: ["create", "patch", "update"]
-- apiGroups:
   - k8s.cni.cncf.io
   resources:
   - network-attachment-definitions
@@ -265,11 +179,6 @@ rules:
   resources:
   - endpointslices
   verbs: ["get", "list", "watch"]
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs: ["create", "patch", "update"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -332,20 +241,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   namespace: ovn-kubernetes
-  name: ovn-k8s-configmap
+  name: ovn-k8s-configmap-event
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
   verbs: ["get", "watch", "list"]
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - create
-  - get
-  - list
-  - update
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch", "update"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -390,10 +293,10 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: only-ovnk8s-configmaps
+  name: only-ovnk8s-configmaps-events
   namespace: ovn-kubernetes
 roleRef:
-  name: ovn-k8s-configmap
+  name: ovn-k8s-configmap-event
   kind: Role
   apiGroup: rbac.authorization.k8s.io
 subjects:
@@ -458,6 +361,39 @@ subjects:
 - kind: ServiceAccount
   name: ovn-db
   namespace: ovn-kubernetes
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ovn-kubernetes
+  name: ovn-master-specific-roles
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs: ["create", "get", "list", "update", "patch"]
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs: ["create", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: ovn-kubernetes
+  name: ovn-master-specific-rolebindings
+roleRef:
+  name: ovn-master-specific-roles
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    namespace: ovn-kubernetes
+    name: ovn-master
 
 {% if in_upgrade != "true" -%}
 ---
