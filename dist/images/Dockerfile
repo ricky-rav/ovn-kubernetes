@@ -44,7 +44,7 @@ INSTALL_PKGS=" \
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY ovnkube.sh ovndb-raft-functions.sh ovnkube-node-probe.sh git_info /root/
+COPY ovnkube.sh ovndb-raft-functions.sh ovnkube-node-readiness-check.sh ovnkube-node-liveness-check.sh git_info /root/
 COPY ovn-kube-util /usr/bin/
 
 LABEL io.k8s.display-name="ovn" \
