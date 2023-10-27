@@ -102,6 +102,8 @@ rules:
   - virtualips/status
   - ipreservations
   - ipreservations/status
+  - portmirrors
+  - portmirrors/status
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups:
   - k8s.cni.cncf.io
@@ -149,6 +151,12 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch", "update"]
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - portmirrors
+  - portmirrors/status
+  verbs: ["get", "list", "watch", "update"]
 
 ---
 # RBAC policies for ovnk8s-node-dpu-host
