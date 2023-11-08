@@ -1,4 +1,4 @@
-gitlab nv-master b357c565bfc85419c1326d174af375f149037e2c merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
+gitlab nv-master b29449b549f9f248861d964ad73119979918bade merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
 
 skipped unneeded commits:
 7a87a4667 further fix for SDN-1656, always get the pods on the nodes
@@ -6,7 +6,7 @@ skipped unneeded commits:
 
 removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27a827524a45badb427d8863d2
 skipped commit ba9d47637ae2393966b70ab2098f405aa65c12a5 delete stale chassis private
-skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd as XDP may needs some more change.
+skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd and 5954befeb8a8168f14f69f3a5a39f381514f1ea5 as XDP may needs some more change.
 
 need to check again Reduce number of ovnkube log records SDN-2054
 
