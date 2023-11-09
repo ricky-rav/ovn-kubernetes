@@ -1,13 +1,22 @@
-gitlab 69c350432e merge with upstream da607b409
-removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27a827524a45badb427d8863d2
-comment out commit https://github.com/ovn-org/ovn-kubernetes/commit/944b5c2f606b06c0a82624a9dea5a9fc4e7d4124
-remove nbctld daemon from ovnkube-master pod commit https://github.com/ovn-org/ovn-kubernetes/commit/ade3f1ecfe506eeaf685dbf13b66bb7e27cbab97
-and some ovs metrics commits are not merged
-add fix to fix retry deadlock
+gitlab nv-master b357c565bfc85419c1326d174af375f149037e2c merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
 
-
-cherry-pick nv-bf2-ovn-kubernetes branch up to commit 69c350432e
-
-nv-master should not need:
+skipped unneeded commits:
 7a87a4667 further fix for SDN-1656, always get the pods on the nodes
-61e434c5e SDN-1656 fail to add gateway router port IPs to policy addressse
+61e434c5e SDN-1656 fail to add gateway router port IPs to policy addressse handlePodsOnNode
+
+removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27a827524a45badb427d8863d2
+skipped commit ba9d47637ae2393966b70ab2098f405aa65c12a5 delete stale chassis private
+skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd as XDP may needs some more change.
+
+need to check again Reduce number of ovnkube log records SDN-2054
+
+mac_binding monitor?
+ChassisTemplateVar variable name starts with CLUSTER
+
+needs to double check dummyMacBinding, PortBinding, Chassis, Encap in multicluster env. (not limited in code in zone_interconnect/chassis_handler.go)
+needs to set full mode sysctl net.ipv4.conf.ovn-k8s-mp0.rp_filter=2, needed by internalTrafficPolicy=Local support, commit 944b5c2f60
+test if hairpin support in multi-cluster setup is correct or not
+
+TBD: priority for AddHandlerWithFilterFunc(), AddXXXHandler() functions
+needs to verify SDN-804
+needs to verify rate limiting (especially update, delete...)

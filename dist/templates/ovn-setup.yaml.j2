@@ -102,8 +102,6 @@ rules:
   - virtualips/status
   - ipreservations
   - ipreservations/status
-  - portmirrors
-  - portmirrors/status
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups:
   - k8s.cni.cncf.io
@@ -114,6 +112,12 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch", "update"]
+- apiGroups: [""]
+  resources:
+  - nodes/status
+  - pods/status
+  - services/status
+  verbs: [ "patch", "update" ]
 
 ---
 # RBAC policies for ovnk8s-node and ovnk8s-node-dpu
@@ -154,9 +158,13 @@ rules:
 - apiGroups:
   - k8s.ovn.org
   resources:
-  - portmirrors
-  - portmirrors/status
-  verbs: ["get", "list", "watch", "update"]
+  - egressips
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources:
+      - nodes/status
+      - pods/status
+  verbs: [ "patch", "update" ]
 
 ---
 # RBAC policies for ovnk8s-node-dpu-host
@@ -169,7 +177,7 @@ rules:
   - ""
   resources:
   - nodes
-  verbs: ["get"]
+  verbs: ["get", "list", "watch"]
 - apiGroups:
   - ""
   resources:
@@ -189,6 +197,21 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch", "update"]
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - egressips
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources:
+      - nodes/status
+      - pods/status
+  verbs: [ "patch", "update" ]
+- apiGroups:
+  - k8s.cni.cncf.io
+  resources:
+  - network-attachment-definitions
+  verbs: ["get", "list", "watch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
