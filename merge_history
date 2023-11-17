@@ -1,4 +1,4 @@
-gitlab nv-master b29449b549f9f248861d964ad73119979918bade merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
+gitlab nv-master 71332e4dbe09f5df3ad98fdd608a40ef55fbaee7 merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
 
 skipped unneeded commits:
 7a87a4667 further fix for SDN-1656, always get the pods on the nodes
@@ -16,6 +16,7 @@ ChassisTemplateVar variable name starts with CLUSTER
 needs to double check dummyMacBinding, PortBinding, Chassis, Encap in multicluster env. (not limited in code in zone_interconnect/chassis_handler.go)
 needs to set full mode sysctl net.ipv4.conf.ovn-k8s-mp0.rp_filter=2, needed by internalTrafficPolicy=Local support, commit 944b5c2f60
 test if hairpin support in multi-cluster setup is correct or not
+note that metrics name changed from ovnkube-master... to ovnkube-controller...
 
 TBD: priority for AddHandlerWithFilterFunc(), AddXXXHandler() functions
 needs to verify SDN-804
