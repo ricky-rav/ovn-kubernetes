@@ -1,0 +1,36 @@
+# This yaml describes how to build, deploy, test and submit artifacts for NV ovn-kubernetes
+# ovn-kubernetes depends on OVN and OVS artifacts
+
+buildOvnKubernetes:
+  OVN:
+    pkgTag: 23.06.0.latest
+    #pkgTag: 23.06.0.7c229b5c.d7423ea3
+  OVS:
+    pkgTag: 3.1.2.latest
+    #pkgTag: 3.1.1.fa9bdb3c.d7423ea2
+    
+# helm deployment info for this branch
+deploy:
+  helm:
+    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm-charts.git
+    branch: main
+    commitID: HEAD
+    MR: 0
+
+test:
+
+cicd:
+  skip_make_check: false
+  skip_SDN_tests: false
+  SDN_LOCK_lock_on_failure: false 
+  sdn_cicd_branch: master
+
+
+# This section describes in which branch and repo to commit the new artifacts in the merge/push case
+artifacts:
+  helm:
+    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm-charts.git
+    branch: branch-sdn-cicd-latest
+    values_yaml: ovn-kubernetes/values-images.yaml
+
+
