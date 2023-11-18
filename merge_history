@@ -8,14 +8,9 @@ removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27
 skipped commit ba9d47637ae2393966b70ab2098f405aa65c12a5 delete stale chassis private
 skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd and 5954befeb8a8168f14f69f3a5a39f381514f1ea5 as XDP may needs some more change.
 
-need to check again Reduce number of ovnkube log records SDN-2054
-
 mac_binding monitor?
-ChassisTemplateVar variable name starts with CLUSTER
 
-needs to double check dummyMacBinding, PortBinding, Chassis, Encap in multicluster env. (not limited in code in zone_interconnect/chassis_handler.go)
 needs to set full mode sysctl net.ipv4.conf.ovn-k8s-mp0.rp_filter=2, needed by internalTrafficPolicy=Local support, commit 944b5c2f60
-test if hairpin support in multi-cluster setup is correct or not
 note that metrics name changed from ovnkube-master... to ovnkube-controller...
 
 TBD: priority for AddHandlerWithFilterFunc(), AddXXXHandler() functions
