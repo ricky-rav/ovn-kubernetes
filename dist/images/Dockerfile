@@ -18,7 +18,7 @@ ARG ARTIFACTORY_CERT
 COPY ./iptables-scripts/firewall-cmd /usr/bin/
 COPY kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 # install epel.repo
-RUN yum install -y epel-release
+RUN yum install -y epel-release net-tools
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
 name=ovn-all-Artifactory \n\
