@@ -1,6 +1,7 @@
 # This yaml describes how to build, deploy, test and submit artifacts for NV ovn-kubernetes
 # ovn-kubernetes depends on OVN and OVS artifacts
 
+projectID: 2649
 buildOvnKubernetes:
   OVN:
     pkgTag: 23.06.0.latest
@@ -10,14 +11,29 @@ buildOvnKubernetes:
     #pkgTag: 3.1.1.fa9bdb3c.d7423ea2
     
 # helm deployment info for this branch
+# These repos and branches will be used by CICD to deploy the relevant helm charts
+# on the CICD rig chosen
 deploy:
   helm:
-    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm-charts.git
-    branch: main
-    commitID: HEAD
-    MR: 0
+    ovn-kubernetes:
+      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
+      branch: main
+    multus:
+      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
+      branch: main
+    sriov-network-device-plugin:
+      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sriov-network-device-plugin.git
+      branch: main
+    sdn-mutator:
+      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-mutator.git
+      branch: main
 
 test:
+  flowTests:
+    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/ovn-k8s-flow-tests.git
+    branch: nv-main
+    commitID: HEAD
+    MR: 0
 
 cicd:
   skip_make_check: false
@@ -28,9 +44,12 @@ cicd:
 
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
+  # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
+  promote: yes
   helm:
-    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm-charts.git
-    branch: branch-sdn-cicd-latest
-    values_yaml: ovn-kubernetes/values-images.yaml
+    repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
+    projectID: 109659
+    branch: main
+    values_yaml: values-images.yaml
 
 
