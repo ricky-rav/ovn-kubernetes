@@ -17,7 +17,7 @@ deploy:
   helm:
     ovn-kubernetes:
       repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-      branch: main
+      branch: main-merge-upstream
     multus:
       repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
       branch: main
@@ -49,7 +49,7 @@ artifacts:
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
-    branch: main
+    branch: main-merge-upstream
     values_yaml: values-images.yaml
 
 
