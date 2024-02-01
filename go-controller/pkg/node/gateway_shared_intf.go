@@ -883,7 +883,7 @@ func (npw *nodePortWatcher) GetLocalEndpointAddresses(endpointSlices []*discover
 	localEndpoints := sets.NewString()
 	for _, endpointSlice := range endpointSlices {
 		for _, endpoint := range endpointSlice.Endpoints {
-			if isEndpointReady(endpoint) && endpoint.NodeName != nil && *endpoint.NodeName == npw.nodeIPManager.nodeName {
+			if util.IsEndpointReady(endpoint) && endpoint.NodeName != nil && *endpoint.NodeName == npw.nodeIPManager.nodeName {
 				localEndpoints.Insert(endpoint.Addresses...)
 			}
 		}
@@ -893,7 +893,7 @@ func (npw *nodePortWatcher) GetLocalEndpointAddresses(endpointSlices []*discover
 
 // GetLocalEligibleEndpointAddresses returns a list of eligible endpoints that are local to the node
 func (npw *nodePortWatcher) GetLocalEligibleEndpointAddresses(endpointSlices []*discovery.EndpointSlice, service *kapi.Service) sets.String {
-	return util.GetLocalEligibleEndpointAddresses(endpointSlices, service, npw.nodeIPManager.nodeName)
+	return util.GetLocalEligibleEndpointAddressesFromSlices(endpointSlices, service, npw.nodeIPManager.nodeName)
 }
 
 func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
@@ -913,8 +913,8 @@ func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discover
 			namespacedName.Namespace, namespacedName.Name, newEpSlice.Name, err)
 	}
 
-	oldEndpointAddresses := util.GetEligibleEndpointAddresses([]*discovery.EndpointSlice{oldEpSlice}, svc)
-	newEndpointAddresses := util.GetEligibleEndpointAddresses([]*discovery.EndpointSlice{newEpSlice}, svc)
+	oldEndpointAddresses := util.GetEligibleEndpointAddressesFromSlices([]*discovery.EndpointSlice{oldEpSlice}, svc)
+	newEndpointAddresses := util.GetEligibleEndpointAddressesFromSlices([]*discovery.EndpointSlice{newEpSlice}, svc)
 	if reflect.DeepEqual(oldEndpointAddresses, newEndpointAddresses) {
 		return nil
 	}
@@ -939,15 +939,21 @@ func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discover
 
 	// Update rules and service cache if hasHostNetworkEndpoints status changed or localEndpoints changed
 	nodeIPs := npw.nodeIPManager.ListAddresses()
-	hasLocalHostNetworkEpOld := hasLocalHostNetworkEndpoints([]*discovery.EndpointSlice{oldEpSlice}, nodeIPs)
-	hasLocalHostNetworkEpNew := hasLocalHostNetworkEndpoints([]*discovery.EndpointSlice{newEpSlice}, nodeIPs)
 	epSlices, err := npw.watchFactory.GetEndpointSlices(newEpSlice.Namespace, newEpSlice.Labels[discovery.LabelServiceName])
 	if err != nil {
 		klog.V(5).Infof("Could not fetch endpointslices for service %s during endpointSliceDelete", namespacedName)
 	}
-	newLocalEndpoints := npw.GetLocalEndpointAddresses(epSlices)
-	if hasLocalHostNetworkEpOld != hasLocalHostNetworkEpNew ||
-		(serviceInfo != nil && !reflect.DeepEqual(serviceInfo.localEndpoints, newLocalEndpoints)) {
+
+	oldLocalEndpoints := npw.GetLocalEligibleEndpointAddresses([]*discovery.EndpointSlice{oldEpSlice}, svc)
+	newLocalEndpoints := npw.GetLocalEligibleEndpointAddresses(epSlices, svc)
+	hasLocalHostNetworkEpOld := util.HasLocalHostNetworkEndpoints(oldLocalEndpoints, nodeIPs)
+	hasLocalHostNetworkEpNew := util.HasLocalHostNetworkEndpoints(newLocalEndpoints, nodeIPs)
+
+	localEndpointsHaveChanged := serviceInfo != nil && !reflect.DeepEqual(serviceInfo.localEndpoints, newLocalEndpoints)
+	localHostNetworkEndpointsPresenceHasChanged := hasLocalHostNetworkEpOld != hasLocalHostNetworkEpNew ||
+		serviceInfo != nil && serviceInfo.hasLocalHostNetworkEp != hasLocalHostNetworkEpNew
+
+	if localEndpointsHaveChanged || localHostNetworkEndpointsPresenceHasChanged {
 		if err = npw.DeleteEndpointSlice(oldEpSlice); err != nil {
 			errors = append(errors, err)
 		}

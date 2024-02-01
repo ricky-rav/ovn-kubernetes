@@ -8,13 +8,13 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
-	utilnet "k8s.io/utils/net"
 )
 
 // initLoadBalancerHealthChecker initializes the health check server for
@@ -162,33 +162,12 @@ func (l *loadBalancerHealthChecker) CountLocalEndpointAddresses(endpointSlices [
 	for _, endpointSlice := range endpointSlices {
 		for _, endpoint := range endpointSlice.Endpoints {
 			isLocal := endpoint.NodeName != nil && *endpoint.NodeName == l.nodeName
-			if isEndpointReady(endpoint) && isLocal {
+			if util.IsEndpointReady(endpoint) && isLocal {
 				localEndpointAddresses.Insert(endpoint.Addresses...)
 			}
 		}
 	}
 	return len(localEndpointAddresses)
-}
-
-// hasLocalHostNetworkEndpoints returns true if there is at least one host-networked endpoint
-// in the provided list that is local to this node.
-// It returns false if none of the endpoints are local host-networked endpoints or if ep.Subsets is nil.
-func hasLocalHostNetworkEndpoints(epSlices []*discovery.EndpointSlice, nodeAddresses []net.IP) bool {
-	for _, epSlice := range epSlices {
-		for _, endpoint := range epSlice.Endpoints {
-			if !isEndpointReady(endpoint) {
-				continue
-			}
-			for _, ip := range endpoint.Addresses {
-				for _, nodeIP := range nodeAddresses {
-					if nodeIP.String() == utilnet.ParseIPSloppy(ip).String() {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
 }
 
 // isHostEndpoint determines if the given endpoint ip belongs to a host networked pod
@@ -199,13 +178,6 @@ func isHostEndpoint(endpointIP string) bool {
 		}
 	}
 	return true
-}
-
-// discovery.EndpointSlice reports in the same slice all endpoints along with their status.
-// isEndpointReady takes an endpoint from an endpoint slice and returns true if the endpoint is
-// to be considered ready.
-func isEndpointReady(endpoint discovery.Endpoint) bool {
-	return endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready
 }
 
 func serviceNamespacedNameFromEndpointSlice(epSlice *discovery.EndpointSlice) (ktypes.NamespacedName, error) {

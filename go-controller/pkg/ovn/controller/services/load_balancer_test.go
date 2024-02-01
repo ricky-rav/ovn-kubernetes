@@ -7,15 +7,112 @@ import (
 
 	globalconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovnlb "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/loadbalancer"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	kube_test "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/stretchr/testify/assert"
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	utilpointer "k8s.io/utils/pointer"
 )
+
+var (
+	nodeA        = "node-a"
+	nodeB        = "node-b"
+	defaultNodes = []nodeInfo{
+		{
+			name:              nodeA,
+			nodeIPs:           []string{"10.0.0.1"},
+			gatewayRouterName: "gr-node-a",
+			switchName:        "switch-node-a",
+		},
+		{
+			name:              nodeB,
+			nodeIPs:           []string{"10.0.0.2"},
+			gatewayRouterName: "gr-node-b",
+			switchName:        "switch-node-b",
+		},
+	}
+
+	tcpv1 = v1.ProtocolTCP
+	udpv1 = v1.ProtocolUDP
+
+	httpPortName    string = "http"
+	httpPortValue   int32  = int32(80)
+	httpsPortName   string = "https"
+	httpsPortValue  int32  = int32(443)
+	customPortName  string = "customApp"
+	customPortValue int32  = int32(10600)
+)
+
+func getSampleService(publishNotReadyAddresses bool) *v1.Service {
+	name := "service-test"
+	namespace := "test"
+	return &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       k8stypes.UID(namespace),
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: v1.ServiceSpec{
+			PublishNotReadyAddresses: publishNotReadyAddresses,
+		},
+	}
+}
+
+func getServicePort(name string, targetPort int32, protocol v1.Protocol) v1.ServicePort {
+	return v1.ServicePort{
+		Name:       name,
+		TargetPort: intstr.FromInt(int(httpPortValue)),
+		Protocol:   protocol,
+	}
+}
+
+func getSampleServiceWithOnePort(name string, targetPort int32, protocol v1.Protocol) *v1.Service {
+	service := getSampleService(false)
+	service.Spec.Ports = []v1.ServicePort{getServicePort(name, targetPort, protocol)}
+	return service
+}
+
+func getSampleServiceWithOnePortAndETPLocal(name string, targetPort int32, protocol v1.Protocol) *v1.Service {
+	service := getSampleServiceWithOnePort(name, targetPort, protocol)
+	service.Spec.Type = v1.ServiceTypeLoadBalancer
+	service.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+	return service
+}
+
+// OCP hack begin
+func getSampleServiceWithOnePortAndITPLocal(name string, targetPort int32, protocol v1.Protocol) *v1.Service {
+	service := getSampleServiceWithOnePort(name, targetPort, protocol)
+	service.Spec.Type = v1.ServiceTypeLoadBalancer
+	local := v1.ServiceInternalTrafficPolicyLocal
+	service.Spec.InternalTrafficPolicy = &local
+	return service
+}
+
+// OCP hack end
+
+func getSampleServiceWithTwoPorts(name1, name2 string, targetPort1, targetPort2 int32, protocol1, protocol2 v1.Protocol) *v1.Service {
+	service := getSampleService(false)
+	service.Spec.Ports = []v1.ServicePort{
+		getServicePort(name1, targetPort1, protocol1),
+		getServicePort(name2, targetPort2, protocol2)}
+	return service
+}
+
+func getSampleServiceWithTwoPortsAndETPLocal(name1, name2 string, targetPort1, targetPort2 int32, protocol1, protocol2 v1.Protocol) *v1.Service {
+	service := getSampleServiceWithTwoPorts(name1, name2, targetPort1, targetPort2, protocol1, protocol2)
+	service.Spec.Type = v1.ServiceTypeLoadBalancer
+	service.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+	return service
+}
+
+func getSampleServiceWithOnePortAndPublishNotReadyAddresses(name string, targetPort int32, protocol v1.Protocol) *v1.Service {
+	service := getSampleServiceWithOnePort(name, targetPort, protocol)
+	service.Spec.PublishNotReadyAddresses = true
+	return service
+}
 
 func Test_buildServiceLBConfigs(t *testing.T) {
 	oldClusterSubnet := globalconfig.Default.ClusterSubnets
@@ -38,7 +135,6 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 	inport1 := int32(81)
 	outport1 := int32(8081)
 	outportstr := intstr.FromInt(int(outport))
-	emptyEPs := util.LbEndpoints{V4IPs: []string{}, V6IPs: []string{}, Port: 0}
 	tcp := v1.ProtocolTCP
 	udp := v1.ProtocolUDP
 
@@ -71,14 +167,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					Name:     &portName,
 				}},
 				AddressType: discovery.AddressTypeIPv4,
-				Endpoints: []discovery.Endpoint{
-					{
-						Conditions: discovery.EndpointConditions{
-							Ready: utilpointer.BoolPtr(true),
-						},
-						Addresses: v4ips,
-					},
-				},
+				Endpoints:   kube_test.MakeReadyEndpointList(nodeA, v4ips...),
 			})
 		}
 
@@ -106,18 +195,29 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					Name:     &portName,
 				}},
 				AddressType: discovery.AddressTypeIPv6,
-				Endpoints: []discovery.Endpoint{
-					{
-						Conditions: discovery.EndpointConditions{
-							Ready: utilpointer.BoolPtr(true),
-						},
-						Addresses: v6ips,
-					},
-				},
+				Endpoints:   kube_test.MakeReadyEndpointList(nodeA, v6ips...),
 			})
 		}
 
 		return out
+	}
+
+	makeV4SliceWithEndpoints := func(proto v1.Protocol, endpoints ...discovery.Endpoint) []*discovery.EndpointSlice {
+		e := &discovery.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      serviceName + "ab1",
+				Namespace: ns,
+				Labels:    map[string]string{discovery.LabelServiceName: serviceName},
+			},
+			Ports: []discovery.EndpointPort{{
+				Protocol: &proto,
+				Port:     &outport,
+				Name:     &portName,
+			}},
+			AddressType: discovery.AddressTypeIPv4,
+			Endpoints:   endpoints,
+		}
+		return []*discovery.EndpointSlice{e}
 	}
 
 	type args struct {
@@ -147,6 +247,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -155,10 +256,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				},
 			},
 			resultSharedGatewayCluster: []lbConfig{{
-				vips:     []string{"192.168.1.1"},
-				protocol: v1.ProtocolTCP,
-				inport:   80,
-				eps:      emptyEPs,
+				vips:             []string{"192.168.1.1"},
+				protocol:         v1.ProtocolTCP,
+				inport:           80,
+				clusterEndpoints: lbEndpoints{},
+				nodeEndpoints:    map[string]lbEndpoints{},
 			}},
 			resultsSame: true,
 		},
@@ -173,6 +275,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -184,16 +287,53 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1"},
 				protocol: v1.ProtocolTCP,
 				inport:   inport,
-				eps: util.LbEndpoints{
+				clusterEndpoints: lbEndpoints{
 					V4IPs: []string{"10.128.0.2"},
-					V6IPs: []string{},
 					Port:  outport,
+				},
+				nodeEndpoints: map[string]lbEndpoints{}, // service is not ETP=local or ITP=local, so nodeEndpoints is not filled out
+			}},
+			resultsSame: true,
+		},
+		{
+			name: "v4 type=LoadBalancer, ETP=local, one port, endpoints",
+			args: args{
+				slices: makeSlices([]string{"10.128.0.2"}, nil, v1.ProtocolTCP),
+				service: &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: v1.ServiceSpec{
+						Type:                  v1.ServiceTypeLoadBalancer,
+						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+						ClusterIP:             "192.168.1.1",
+						ClusterIPs:            []string{"192.168.1.1"},
+						Ports: []v1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   v1.ProtocolTCP,
+							TargetPort: outportstr,
+						}},
+					},
+				},
+			},
+			resultSharedGatewayCluster: []lbConfig{{
+				vips:     []string{"192.168.1.1"},
+				protocol: v1.ProtocolTCP,
+				inport:   inport,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"10.128.0.2"},
+					Port:  outport,
+				},
+				nodeEndpoints: map[string]lbEndpoints{ // service is ETP=local, so nodeEndpoints is filled out
+					nodeA: {
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
 				},
 			}},
 			resultsSame: true,
 		},
 		{
-			name: "v4 clusterip, two tcp ports, endpoints",
+			name: "v4 clusterip, two tcp ports, two endpoints",
 			args: args{
 				slices: []*discovery.EndpointSlice{
 					{
@@ -214,14 +354,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 							},
 						},
 						AddressType: discovery.AddressTypeIPv4,
-						Endpoints: []discovery.Endpoint{
-							{
-								Conditions: discovery.EndpointConditions{
-									Ready: utilpointer.BoolPtr(true),
-								},
-								Addresses: []string{"10.128.0.2", "10.128.1.2"},
-							},
-						},
+						Endpoints:   kube_test.MakeReadyEndpointList(nodeA, "10.128.0.2", "10.128.1.2"),
 					},
 				},
 				service: &v1.Service{
@@ -253,26 +386,26 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 				{
 					vips:     []string{"192.168.1.1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport1,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
 						Port:  outport1,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 			},
 		},
 		{
-			name: "v4 clusterip, one tcp, one udp port, endpoints",
+			name: "v4 clusterip, one tcp, one udp port, two endpoints",
 			args: args{
 				slices: []*discovery.EndpointSlice{
 					{
@@ -293,14 +426,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 							},
 						},
 						AddressType: discovery.AddressTypeIPv4,
-						Endpoints: []discovery.Endpoint{
-							{
-								Conditions: discovery.EndpointConditions{
-									Ready: utilpointer.BoolPtr(true),
-								},
-								Addresses: []string{"10.128.0.2", "10.128.1.2"},
-							},
-						},
+						Endpoints:   kube_test.MakeReadyEndpointList(nodeA, "10.128.0.2", "10.128.1.2"),
 					},
 				},
 				service: &v1.Service{
@@ -332,21 +458,21 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 				{
 					vips:     []string{"192.168.1.1"},
 					protocol: v1.ProtocolUDP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 			},
 		},
@@ -361,6 +487,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1", "2002::1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -373,11 +500,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1"},
 				protocol: v1.ProtocolTCP,
 				inport:   inport,
-				eps: util.LbEndpoints{
+				clusterEndpoints: lbEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
+				nodeEndpoints: map[string]lbEndpoints{},
 			}},
 		},
 		{
@@ -391,6 +519,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1", "2002::1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -411,15 +540,16 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1", "4.2.2.2", "42::42", "5.5.5.5"},
 				protocol: v1.ProtocolTCP,
 				inport:   inport,
-				eps: util.LbEndpoints{
+				clusterEndpoints: lbEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
+				nodeEndpoints: map[string]lbEndpoints{}, // ETP=cluster (default), so nodeEndpoints is not filled out
 			}},
 		},
 		{
-			name: "dual-stack clusterip, one port, endpoints, external ips + lb status, ExternalTrafficPolicy",
+			name: "dual-stack clusterip, one port, endpoints, external ips + lb status, ExternalTrafficPolicy=local",
 			args: args{
 				slices: makeSlices([]string{"10.128.0.2"}, []string{"fe00::1:1"}, v1.ProtocolTCP),
 				service: &v1.Service{
@@ -430,6 +560,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIPs:            []string{"192.168.1.1", "2002::1"},
 						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -451,10 +582,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						V6IPs: []string{"fe00::1:1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							V6IPs: []string{"fe00::1:1"},
+							Port:  outport,
+						},
 					},
 				},
 			},
@@ -464,10 +602,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					protocol:             v1.ProtocolTCP,
 					inport:               inport,
 					externalTrafficLocal: true,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						V6IPs: []string{"fe00::1:1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							V6IPs: []string{"fe00::1:1"},
+							Port:  outport,
+						},
 					},
 				},
 			},
@@ -483,6 +628,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1", "2002::1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -496,22 +642,24 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1"},
 				protocol: v1.ProtocolTCP,
 				inport:   inport,
-				eps: util.LbEndpoints{
+				clusterEndpoints: lbEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
+				nodeEndpoints: map[string]lbEndpoints{},
 			}},
 			resultSharedGatewayNode: []lbConfig{{
 				vips:     []string{"node"},
 				protocol: v1.ProtocolTCP,
 				inport:   5,
-				eps: util.LbEndpoints{
+				clusterEndpoints: lbEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
-				hasNodePort: true,
+				nodeEndpoints: map[string]lbEndpoints{},
+				hasNodePort:   true,
 			}},
 		},
 		{
@@ -526,6 +674,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1", "2002::1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -540,22 +689,24 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   5,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					hasNodePort: true,
+					nodeEndpoints: map[string]lbEndpoints{},
+					hasNodePort:   true,
 				},
 				{
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 			},
 			// in local gateway mode, only nodePort is per-node
@@ -564,22 +715,38 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   5,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{}, // TODO not sure, see ETP=local below
+					// externalTrafficLocal: true, // TODO not sure, false in 4.12
 					hasNodePort: true,
 				},
+				// // TOODO BOH? start
+				// {
+				// 	vips:     []string{"192.168.1.1", "2002::1"},
+				// 	protocol: v1.ProtocolTCP,
+				// 	inport:   inport,
+				// 	clusterEndpoints: lbEndpoints{
+				// 		V4IPs: []string{"192.168.0.1"},
+				// 		V6IPs: []string{"2001::1"},
+				// 		Port:  outport,
+				// 	},
+				// 	nodeEndpoints: map[string]lbEndpoints{},
+				// },
+				// // TOODO BOH? end
 				{
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 			},
 		},
@@ -596,6 +763,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIPs:            []string{"192.168.1.1", "2002::1"},
 						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -610,10 +778,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   5,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							V6IPs: []string{"2001::1"},
+							Port:  outport,
+						},
 					},
 					externalTrafficLocal: true,
 					hasNodePort:          true,
@@ -622,10 +797,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							V6IPs: []string{"2001::1"},
+							Port:  outport,
+						},
 					},
 				},
 			},
@@ -634,10 +816,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   5,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							V6IPs: []string{"2001::1"},
+							Port:  outport,
+						},
 					},
 					externalTrafficLocal: true,
 					hasNodePort:          true,
@@ -646,10 +835,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							V6IPs: []string{"2001::1"},
+							Port:  outport,
+						},
 					},
 				},
 			},
@@ -666,6 +862,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 						ClusterIP:  "192.168.1.1",
 						ClusterIPs: []string{"192.168.1.1", "2002::1"},
 						Ports: []v1.ServicePort{{
+							Name:       portName,
 							Port:       inport,
 							Protocol:   v1.ProtocolTCP,
 							TargetPort: outportstr,
@@ -679,11 +876,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
+					nodeEndpoints: map[string]lbEndpoints{},
 				},
 			},
 			resultLocalGatewayNode: []lbConfig{
@@ -691,10 +889,299 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   inport,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{},
+				},
+			},
+		},
+		{
+			name: "LB service with NodePort, one port, two endpoints, external ips + lb status, ExternalTrafficPolicy=local",
+			args: args{
+				slices: makeV4SliceWithEndpoints(
+					v1.ProtocolTCP,
+					kube_test.MakeReadyEndpoint(nodeA, "10.128.0.2"),
+					kube_test.MakeReadyEndpoint(nodeB, "10.128.1.2"),
+				),
+				service: &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: v1.ServiceSpec{
+						Type:                  v1.ServiceTypeLoadBalancer,
+						ClusterIP:             "192.168.1.1",
+						ClusterIPs:            []string{"192.168.1.1"},
+						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+						Ports: []v1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   v1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5,
+						}},
+						ExternalIPs: []string{"4.2.2.2"},
+					},
+					Status: v1.ServiceStatus{
+						LoadBalancer: v1.LoadBalancerStatus{
+							Ingress: []v1.LoadBalancerIngress{{
+								IP: "5.5.5.5",
+							}},
+						},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1"},
+					protocol: v1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"},
+							Port:  outport,
+						},
+					},
+				},
+			},
+			resultSharedGatewayNode: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5,
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"},
+							Port:  outport,
+						},
+					},
+				},
+				{
+					vips:                 []string{"4.2.2.2", "5.5.5.5"},
+					protocol:             v1.ProtocolTCP,
+					inport:               inport,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"},
+							Port:  outport,
+						},
+					},
+				},
+			},
+		},
+		{
+			// The fallback to terminating&serving only if there are no ready endpoints
+			// is not done at this stage: we just include candidate endpoints, that is  ready + terminating&serving.
+			// The test below will just show both endpoints in its output.
+			name: "LB service with NodePort, port, two endpoints, external ips + lb status, ExternalTrafficPolicy=local, one endpoint is ready, the other one is terminating and serving",
+			args: args{
+				slices: makeV4SliceWithEndpoints(v1.ProtocolTCP,
+					kube_test.MakeReadyEndpoint(nodeA, "10.128.0.2"),
+					kube_test.MakeTerminatingServingEndpoint(nodeB, "10.128.1.2")),
+				service: &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: v1.ServiceSpec{
+						Type:                  v1.ServiceTypeLoadBalancer,
+						ClusterIP:             "192.168.1.1",
+						ClusterIPs:            []string{"192.168.1.1"},
+						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+						Ports: []v1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   v1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5,
+						}},
+						ExternalIPs: []string{"4.2.2.2"},
+					},
+					Status: v1.ServiceStatus{
+						LoadBalancer: v1.LoadBalancerStatus{
+							Ingress: []v1.LoadBalancerIngress{{
+								IP: "5.5.5.5",
+							}},
+						},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1"},
+					protocol: v1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"}, // fallback to terminating & serving on nodeB
+							Port:  outport,
+						},
+					},
+				},
+			},
+			resultSharedGatewayNode: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5,
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"}, // fallback to terminating & serving on nodeB
+							Port:  outport,
+						},
+					},
+				},
+				{
+					vips:                 []string{"4.2.2.2", "5.5.5.5"},
+					protocol:             v1.ProtocolTCP,
+					inport:               inport,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"}, // fallback to terminating & serving on nodeB
+							Port:  outport,
+						},
+					},
+				},
+			},
+		},
+		{
+			// Terminating & non-serving endpoints are filtered out by buildServiceLBConfigs
+			name: "LB service with NodePort, one port, two endpoints, external ips + lb status, ExternalTrafficPolicy=local, both endpoints terminating: one is serving, the other one is not",
+			args: args{
+				slices: makeV4SliceWithEndpoints(v1.ProtocolTCP,
+					kube_test.MakeTerminatingServingEndpoint(nodeA, "10.128.0.2"),
+					kube_test.MakeTerminatingNonServingEndpoint(nodeB, "10.128.1.2")),
+				service: &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: v1.ServiceSpec{
+						Type:                  v1.ServiceTypeLoadBalancer,
+						ClusterIP:             "192.168.1.1",
+						ClusterIPs:            []string{"192.168.1.1"},
+						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+						Ports: []v1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   v1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5,
+						}},
+						ExternalIPs: []string{"4.2.2.2"},
+					},
+					Status: v1.ServiceStatus{
+						LoadBalancer: v1.LoadBalancerStatus{
+							Ingress: []v1.LoadBalancerIngress{{
+								IP: "5.5.5.5",
+							}},
+						},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1"},
+					protocol: v1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+					},
+				},
+			},
+			resultSharedGatewayNode: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5,
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
+					},
+				},
+				{
+					vips:                 []string{"4.2.2.2", "5.5.5.5"},
+					protocol:             v1.ProtocolTCP,
+					inport:               inport,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  outport,
+						},
 					},
 				},
 			},
@@ -703,13 +1190,17 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
+			// shared gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
-			perNode, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices)
+			perNode, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes)
+
 			assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "SGW per-node configs should be equal")
+
 			assert.EqualValues(t, tt.resultSharedGatewayCluster, clusterWide, "SGW cluster-wide configs should be equal")
 
+			// local gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
-			perNode, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices)
+			perNode, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes)
 			if tt.resultsSame {
 				assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "LGW per-node configs should be equal")
 				assert.EqualValues(t, tt.resultSharedGatewayCluster, clusterWide, "LGW cluster-wide configs should be equal")
@@ -738,21 +1229,6 @@ func Test_buildClusterLBs(t *testing.T) {
 		},
 	}
 
-	defaultNodes := []nodeInfo{
-		{
-			name:              "node-a",
-			nodeIPs:           []string{"10.0.0.1"},
-			gatewayRouterName: "gr-node-a",
-			switchName:        "switch-node-a",
-		},
-		{
-			name:              "node-b",
-			nodeIPs:           []string{"10.0.0.2"},
-			gatewayRouterName: "gr-node-b",
-			switchName:        "switch-node-b",
-		},
-	}
-
 	defaultExternalIDs := map[string]string{
 		"k8s.ovn.org/kind":  "Service",
 		"k8s.ovn.org/owner": fmt.Sprintf("%s/%s", namespace, name),
@@ -761,6 +1237,7 @@ func Test_buildClusterLBs(t *testing.T) {
 	defaultRouters := []string{}
 	defaultSwitches := []string{}
 	defaultGroups := []string{"clusterLBGroup"}
+	defaultOpts := ovnlb.LBOpts{}
 
 	tc := []struct {
 		name      string
@@ -777,18 +1254,30 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"1.2.3.4"},
 					protocol: v1.ProtocolTCP,
 					inport:   443,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						Port:  8043,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							Port:  8043,
+						},
 					},
 				},
 			},
@@ -800,18 +1289,19 @@ func Test_buildClusterLBs(t *testing.T) {
 					ExternalIDs: defaultExternalIDs,
 					Rules: []ovnlb.LBRule{
 						{
-							Source:  ovnlb.Addr{"1.2.3.4", 80},
-							Targets: []ovnlb.Addr{{"192.168.0.1", 8080}, {"192.168.0.2", 8080}},
+							Source:  ovnlb.Addr{IP: "1.2.3.4", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "192.168.0.1", Port: 8080}, {IP: "192.168.0.2", Port: 8080}},
 						},
 						{
-							Source:  ovnlb.Addr{"1.2.3.4", 443},
-							Targets: []ovnlb.Addr{{"192.168.0.1", 8043}},
+							Source:  ovnlb.Addr{IP: "1.2.3.4", Port: 443},
+							Targets: []ovnlb.Addr{{IP: "192.168.0.1", Port: 8043}},
 						},
 					},
 
 					Routers:  defaultRouters,
 					Switches: defaultSwitches,
 					Groups:   defaultGroups,
+					Opts:     defaultOpts,
 				},
 			},
 		},
@@ -823,18 +1313,30 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"1.2.3.4"},
 					protocol: v1.ProtocolUDP,
 					inport:   443,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						Port:  8043,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							Port:  8043,
+						},
 					},
 				},
 			},
@@ -869,6 +1371,7 @@ func Test_buildClusterLBs(t *testing.T) {
 					Switches: defaultSwitches,
 					Routers:  defaultRouters,
 					Groups:   defaultGroups,
+					Opts:     defaultOpts,
 				},
 			},
 		},
@@ -880,20 +1383,36 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4", "fe80::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						V6IPs: []string{"fe90::1", "fe91::1"},
-						Port:  8080,
+
+						Port: 8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
+							V6IPs: []string{"fe90::1", "fe91::1"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"1.2.3.4", "fe80::1"},
 					protocol: v1.ProtocolTCP,
 					inport:   443,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"fe90::1"},
-						Port:  8043,
+
+						Port: 8043,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"192.168.0.1"},
+							V6IPs: []string{"fe90::1"},
+							Port:  8043,
+						},
 					},
 				},
 			},
@@ -925,11 +1444,11 @@ func Test_buildClusterLBs(t *testing.T) {
 					Routers:  defaultRouters,
 					Switches: defaultSwitches,
 					Groups:   defaultGroups,
+					Opts:     defaultOpts,
 				},
 			},
 		},
 	}
-
 	for i, tt := range tc {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
 			actual := buildClusterLBs(tt.service, tt.configs, tt.nodeInfos, true)
@@ -941,15 +1460,20 @@ func Test_buildClusterLBs(t *testing.T) {
 func Test_buildPerNodeLBs(t *testing.T) {
 	oldClusterSubnet := globalconfig.Default.ClusterSubnets
 	oldGwMode := globalconfig.Gateway.Mode
+	oldServiceCIDRs := globalconfig.Kubernetes.ServiceCIDRs
 	defer func() {
 		globalconfig.Gateway.Mode = oldGwMode
 		globalconfig.Default.ClusterSubnets = oldClusterSubnet
+		globalconfig.Kubernetes.ServiceCIDRs = oldServiceCIDRs
 	}()
+
 	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
 	_, cidr6, _ := net.ParseCIDR("fe00::/64")
 	globalconfig.Default.ClusterSubnets = []globalconfig.CIDRNetworkEntry{{cidr4, 26}, {cidr6, 26}}
-	_, svcCIDRs, _ := net.ParseCIDR("192.168.0.0/24")
-	globalconfig.Kubernetes.ServiceCIDRs = []*net.IPNet{svcCIDRs}
+	_, svcCIDRv4, _ := net.ParseCIDR("192.168.0.0/24")
+	_, svcCIDRv6, _ := net.ParseCIDR("fd92::0/80")
+
+	globalconfig.Kubernetes.ServiceCIDRs = []*net.IPNet{svcCIDRv4}
 
 	name := "foo"
 	namespace := "testns"
@@ -963,14 +1487,14 @@ func Test_buildPerNodeLBs(t *testing.T) {
 
 	defaultNodes := []nodeInfo{
 		{
-			name:              "node-a",
-			nodeIPs:           []string{"10.0.0.1"},
+			name:              nodeA,
+			nodeIPs:           []string{"10.0.0.1", "10.0.0.111"},
 			gatewayRouterName: "gr-node-a",
 			switchName:        "switch-node-a",
 			podSubnets:        []net.IPNet{{IP: net.ParseIP("10.128.0.0"), Mask: net.CIDRMask(24, 32)}},
 		},
 		{
-			name:              "node-b",
+			name:              nodeB,
 			nodeIPs:           []string{"10.0.0.2"},
 			gatewayRouterName: "gr-node-b",
 			switchName:        "switch-node-b",
@@ -978,10 +1502,28 @@ func Test_buildPerNodeLBs(t *testing.T) {
 		},
 	}
 
+	defaultNodesV6 := []nodeInfo{
+		{
+			name:              nodeA,
+			nodeIPs:           []string{"fd00::1", "fd00::111"},
+			gatewayRouterName: "gr-node-a",
+			switchName:        "switch-node-a",
+			podSubnets:        []net.IPNet{{IP: net.ParseIP("fe00:0:0:0:1::0"), Mask: net.CIDRMask(64, 64)}},
+		},
+		{
+			name:              nodeB,
+			nodeIPs:           []string{"fd00::2"},
+			gatewayRouterName: "gr-node-b",
+			switchName:        "switch-node-b",
+			podSubnets:        []net.IPNet{{IP: net.ParseIP("fe00:0:0:0:2::0"), Mask: net.CIDRMask(64, 64)}},
+		},
+	}
+
 	defaultExternalIDs := map[string]string{
 		"k8s.ovn.org/kind":  "Service",
 		"k8s.ovn.org/owner": fmt.Sprintf("%s/%s", namespace, name),
 	}
+	defaultOpts := ovnlb.LBOpts{}
 
 	//defaultRouters := []string{"gr-node-a", "gr-node-b"}
 	//defaultSwitches := []string{"switch-node-a", "switch-node-b"}
@@ -1001,9 +1543,15 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1019,6 +1567,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a_merged",
@@ -1032,6 +1581,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
@@ -1043,9 +1593,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
 					},
 				},
 			},
@@ -1061,7 +1614,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
@@ -1075,6 +1633,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 			expectedLocal: []ovnlb.LB{
@@ -1089,7 +1648,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
@@ -1103,6 +1667,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
@@ -1114,18 +1679,30 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"192.168.0.1"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"node"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1144,7 +1721,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "169.254.169.2", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1160,7 +1742,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
@@ -1178,6 +1765,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 			expectedLocal: []ovnlb.LB{
@@ -1195,7 +1783,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "169.254.169.2", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1211,7 +1804,12 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
@@ -1229,21 +1827,28 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
 		{
 			// The most complicated case
-			name:    "nodeport service, host-network pod, ExternalTrafficPolicy",
+			name:    "nodeport service, host-network pod, ExternalTrafficPolicy=local",
 			service: defaultService,
 			configs: []lbConfig{
 				{
 					vips:     []string{"192.168.0.1"},
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
 					},
 				},
 				{
@@ -1252,9 +1857,15 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					externalTrafficLocal: true,
 					hasNodePort:          true,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1274,6 +1885,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
@@ -1285,6 +1897,10 @@ func Test_buildPerNodeLBs(t *testing.T) {
 						{
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "169.254.169.2", Port: 8080}},
 						},
 					},
 				},
@@ -1306,10 +1922,19 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Source:  ovnlb.Addr{"10.0.0.1", 80},
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
 					},
+					Opts: defaultOpts,
 				},
 
-				// node-b has no service, 3 lbs
+				// node-b has no endpoint, 3 lbs
 				// router clusterip
 				// router nodeport = empty
 				// switch clusterip + nodeport
@@ -1328,6 +1953,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1348,6 +1974,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
@@ -1360,18 +1987,38 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					protocol:             v1.ProtocolTCP,
 					inport:               80,
 					internalTrafficLocal: true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.0.1", "10.128.1.1"}, // 1 ep on node-a and 1 ep on node-b
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.1", "10.128.1.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.1"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.1"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"1.2.3.4"}, // externalIP config
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.128.0.1", "10.128.1.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.1"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.1"},
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1391,6 +2038,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1407,6 +2055,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1423,6 +2072,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 			expectedLocal: []ovnlb.LB{
@@ -1441,6 +2091,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1457,6 +2108,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1473,6 +2125,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.128.0.1", 8080}, {"10.128.1.1", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
@@ -1485,18 +2138,38 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					protocol:             v1.ProtocolTCP,
 					inport:               80,
 					internalTrafficLocal: true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.0.0.1", "10.0.0.2"}, // 1 ep on node-a and 1 ep on node-b
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.0.0.1", "10.0.0.2"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.0.0.2"},
+							Port:  8080,
+						},
 					},
 				},
 				{
 					vips:     []string{"1.2.3.4"}, // externalIP config
 					protocol: v1.ProtocolTCP,
 					inport:   80,
-					eps: util.LbEndpoints{
+					clusterEndpoints: lbEndpoints{
 						V4IPs: []string{"10.0.0.1", "10.0.0.2"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.0.0.2"},
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1516,6 +2189,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}, {"10.0.0.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1532,6 +2206,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"10.0.0.2", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router_node-b",
@@ -1548,6 +2223,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"169.254.169.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1564,6 +2240,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"10.0.0.2", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 			expectedLocal: []ovnlb.LB{
@@ -1582,6 +2259,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}, {"10.0.0.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-a",
@@ -1598,6 +2276,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"10.0.0.2", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router_node-b",
@@ -1614,6 +2293,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"169.254.169.2", 8080}},
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1630,6 +2310,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}, {"10.0.0.2", 8080}}, // ITP is only applicable for clusterIPs
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 		},
@@ -1644,9 +2325,15 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					internalTrafficLocal: true,
 					externalTrafficLocal: false, // ETP is applicable only to nodePorts and LBs
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
+							Port:  8080,
+						},
 					},
 				},
 				{
@@ -1656,9 +2343,15 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					externalTrafficLocal: true,
 					internalTrafficLocal: false, // ITP is applicable only to clusterIPs
 					hasNodePort:          true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
+							Port:  8080,
+						},
 					},
 				},
 			},
@@ -1674,6 +2367,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}}, // we don't filter clusterIPs at GR for ETP/ITP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
@@ -1685,6 +2379,10 @@ func Test_buildPerNodeLBs(t *testing.T) {
 						{
 							Source:  ovnlb.Addr{"10.0.0.1", 34345},
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}}, // special skip_snat=true LB for ETP=local; used in SGW mode
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "169.254.169.2", Port: 8080}},
 						},
 					},
 				},
@@ -1703,8 +2401,16 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},   // filter out eps only on node-a for nodePorts
 						},
 						{
-							Source:  ovnlb.Addr{"10.0.0.1", 34345},
-							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}}, // don't filter out eps for nodePorts on switches when ETP=local
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}}, // don't filter out eps for nodePorts on switches when ETP=local
 						},
 					},
 				},
@@ -1723,6 +2429,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{}, // filter out eps only on node-b for nodePort on GR when ETP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1743,6 +2450,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}}, // don't filter out eps for nodePorts on switches when ETP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 			},
 			expectedLocal: []ovnlb.LB{
@@ -1757,6 +2465,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}}, // we don't filter clusterIPs at GR for ETP/ITP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
@@ -1768,6 +2477,10 @@ func Test_buildPerNodeLBs(t *testing.T) {
 						{
 							Source:  ovnlb.Addr{"10.0.0.1", 34345},
 							Targets: []ovnlb.Addr{{"169.254.169.2", 8080}}, // special skip_snat=true LB for ETP=local; used in SGW mode
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "169.254.169.2", Port: 8080}},
 						},
 					},
 				},
@@ -1786,10 +2499,19 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}},   // filter out eps only on node-a for nodePorts
 						},
 						{
-							Source:  ovnlb.Addr{"10.0.0.1", 34345},
-							Targets: []ovnlb.Addr{{"10.0.0.1", 8080}}, // don't filter out eps for nodePorts on switches when ETP=local
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 34345},
+							Targets: []ovnlb.Addr{{IP: "10.0.0.1", Port: 8080}}, // don't filter out eps for nodePorts on switches when ETP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_router_node-b",
@@ -1806,6 +2528,7 @@ func Test_buildPerNodeLBs(t *testing.T) {
 							Targets: []ovnlb.Addr{}, // filter out eps only on node-b for nodePort on GR when ETP=local
 						},
 					},
+					Opts: defaultOpts,
 				},
 				{
 					Name:        "Service_testns/foo_TCP_node_switch_node-b",
@@ -1829,8 +2552,548 @@ func Test_buildPerNodeLBs(t *testing.T) {
 				},
 			},
 		},
+		// tests for endpoint selection with ExternalTrafficPolicy=local
+		{
+			name:    "LB service with NodePort, standard pods on different nodes, ExternalTrafficPolicy=local, both endpoints are ready",
+			service: defaultService,
+			configs: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5, // nodePort
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"},
+							Port:  8080,
+						},
+					},
+				},
+				{
+					vips:                 []string{"4.2.2.2", "5.5.5.5"}, // externalIP + LB IP
+					protocol:             v1.ProtocolTCP,
+					inport:               80,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.2"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.2"},
+							Port:  8080,
+						},
+					},
+				},
+			},
+			expectedShared: []ovnlb.LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint (ready)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint (ready)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint (ready)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint (ready)
+						},
+					},
+					Routers: []string{"gr-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+					},
+					Switches: []string{"switch-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (ready)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (ready)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (ready)
+						},
+					},
+					Routers: []string{"gr-node-b"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}},
+						},
+					},
+					Switches: []string{"switch-node-b"},
+				},
+			},
+		},
+		{
+			name:    "LB service with NodePort, standard pods on different nodes, ExternalTrafficPolicy=local, one endpoint is ready, the other one is terminating and serving",
+			service: defaultService,
+			configs: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5, // nodePort
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
+						nodeB: {V4IPs: []string{"10.128.1.2"}, Port: 8080},
+					},
+				},
+				{
+					vips:                 []string{"4.2.2.2", "5.5.5.5"}, // externalIP + LB IP
+					protocol:             v1.ProtocolTCP,
+					inport:               80,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
+						nodeB: {V4IPs: []string{"10.128.1.2"}, Port: 8080},
+					},
+				},
+			},
+			expectedShared: []ovnlb.LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // local endpoint
+						},
+					},
+					Routers: []string{"gr-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+					},
+					Switches: []string{"switch-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+					},
+					Routers: []string{"gr-node-b"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "4.2.2.2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+					},
+					Switches: []string{"switch-node-b"},
+				},
+			},
+		},
 	}
 
+	// needs separate configuration variables for a V6 cluster
+	tcV6 := []struct {
+		name           string
+		service        *v1.Service
+		configs        []lbConfig
+		expectedShared []ovnlb.LB
+		expectedLocal  []ovnlb.LB
+	}{
+		// exactly the same as the v4 test under the same name
+		{
+			name:    "ipv6, nodeport service, standard pod",
+			service: defaultService,
+			configs: []lbConfig{
+				{
+					vips:     []string{"node"},
+					protocol: v1.ProtocolTCP,
+					inport:   80,
+					clusterEndpoints: lbEndpoints{
+						V6IPs: []string{"fe00:0:0:0:1::2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
+					},
+				},
+			},
+			expectedShared: []ovnlb.LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_router+switch_node-a",
+					ExternalIDs: defaultExternalIDs,
+					Routers:     []string{"gr-node-a"},
+					Switches:    []string{"switch-node-a"},
+					Protocol:    "TCP",
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::1", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+					},
+					Opts: defaultOpts,
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
+					ExternalIDs: defaultExternalIDs,
+					Routers:     []string{"gr-node-b"},
+					Switches:    []string{"switch-node-b"},
+					Protocol:    "TCP",
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+					},
+					Opts: defaultOpts,
+				},
+			},
+			expectedLocal: []ovnlb.LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_router+switch_node-a",
+					ExternalIDs: defaultExternalIDs,
+					Routers:     []string{"gr-node-a"},
+					Switches:    []string{"switch-node-a"},
+					Protocol:    "TCP",
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::1", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::111", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+					},
+					Opts: defaultOpts,
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_router+switch_node-b",
+					ExternalIDs: defaultExternalIDs,
+					Routers:     []string{"gr-node-b"},
+					Switches:    []string{"switch-node-b"},
+					Protocol:    "TCP",
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+					},
+					Opts: defaultOpts,
+				},
+			},
+		},
+		{
+			// exactly the same as last test case for IPv4 but IPv6
+			name:    "IPv6, LB service with NodePort, standard pods on different nodes, ExternalTrafficPolicy=local, one endpoint is ready, the other one is terminating and serving",
+			service: defaultService,
+			configs: []lbConfig{
+				{
+					vips:                 []string{"node"},
+					protocol:             v1.ProtocolTCP,
+					inport:               5, // nodePort
+					hasNodePort:          true,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V6IPs: []string{"fe00:0:0:0:1::2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
+						nodeB: {V6IPs: []string{"fe00:0:0:0:2::2"}, Port: 8080},
+					},
+				},
+				{
+					vips:                 []string{"cafe::2", "abcd::5"}, // externalIP + LB IP
+					protocol:             v1.ProtocolTCP,
+					inport:               80,
+					hasNodePort:          false,
+					externalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V6IPs: []string{"fe00:0:0:0:1::2"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
+						nodeB: {V6IPs: []string{"fe00:0:0:0:2::2"}, Port: 8080},
+					},
+				},
+			},
+			expectedShared: []ovnlb.LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "cafe::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // local endpoint
+						},
+						{
+							Source:  ovnlb.Addr{IP: "abcd::5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // local endpoint
+						},
+					},
+					Routers: []string{"gr-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-a",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd69::3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::1", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd69::3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::111", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "cafe::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "abcd::5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+					},
+					Switches: []string{"switch-node-a"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_local_router_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        ovnlb.LBOpts{SkipSNAT: true},
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd00::2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:2::2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "cafe::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:2::2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+						{
+							Source:  ovnlb.Addr{IP: "abcd::5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:2::2", Port: 8080}}, // local endpoint (fallback to terminating and serving)
+						},
+					},
+					Routers: []string{"gr-node-b"},
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-b",
+					Protocol:    "TCP",
+					ExternalIDs: defaultExternalIDs,
+					Opts:        defaultOpts,
+					Rules: []ovnlb.LBRule{
+						{
+							Source:  ovnlb.Addr{IP: "fd69::3", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:2::2", Port: 8080}},
+						},
+						{
+							Source:  ovnlb.Addr{IP: "fd00::2", Port: 5},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "cafe::2", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+						{
+							Source:  ovnlb.Addr{IP: "abcd::5", Port: 80},
+							Targets: []ovnlb.Addr{{IP: "fe00:0:0:0:1::2", Port: 8080}}, // prefer endpoint on node1 since it's ready
+						},
+					},
+					Switches: []string{"switch-node-b"},
+				},
+			},
+		},
+	}
+	// v4
 	for i, tt := range tc {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
 
@@ -1848,22 +3111,33 @@ func Test_buildPerNodeLBs(t *testing.T) {
 
 		})
 	}
+
+	// v6
+	globalconfig.Kubernetes.ServiceCIDRs = []*net.IPNet{svcCIDRv6}
+	for i, tt := range tcV6 {
+		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
+
+			if tt.expectedShared != nil {
+				globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
+				actual := buildPerNodeLBs(tt.service, tt.configs, defaultNodesV6)
+				assert.Equal(t, tt.expectedShared, actual, "shared gateway mode not as expected")
+			}
+
+			if tt.expectedLocal != nil {
+				globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
+				actual := buildPerNodeLBs(tt.service, tt.configs, defaultNodesV6)
+				assert.Equal(t, tt.expectedLocal, actual, "local gateway mode not as expected")
+			}
+
+		})
+	}
+
 }
 
-// OCP hack begin
-func Test_buildPerNodeLBs_OCPHackForDNS(t *testing.T) {
-	oldClusterSubnet := globalconfig.Default.ClusterSubnets
-	oldGwMode := globalconfig.Gateway.Mode
-	defer func() {
-		globalconfig.Gateway.Mode = oldGwMode
-		globalconfig.Default.ClusterSubnets = oldClusterSubnet
-	}()
-	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
-	_, cidr6, _ := net.ParseCIDR("fe00::/64")
-	globalconfig.Default.ClusterSubnets = []globalconfig.CIDRNetworkEntry{{cidr4, 26}, {cidr6, 26}}
-
-	name := "dns-default"
-	namespace := "openshift-dns"
+func Test_makeNodeSwitchTargetIPs(t *testing.T) {
+	// OCP HACK BEGIN
+	name := "foo"
+	namespace := "testns"
 
 	defaultService := &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
@@ -1872,389 +3146,154 @@ func Test_buildPerNodeLBs_OCPHackForDNS(t *testing.T) {
 		},
 	}
 
-	defaultNodes := []nodeInfo{
-		{
-			name:              "node-a",
-			nodeIPs:           []string{"10.0.0.1"},
-			gatewayRouterName: "gr-node-a",
-			switchName:        "switch-node-a",
-			podSubnets:        []net.IPNet{{IP: net.ParseIP("10.128.0.0"), Mask: net.CIDRMask(24, 32)}},
-		},
-		{
-			name:              "node-b",
-			nodeIPs:           []string{"10.0.0.2"},
-			gatewayRouterName: "gr-node-b",
-			switchName:        "switch-node-b",
-			podSubnets:        []net.IPNet{{IP: net.ParseIP("10.128.1.0"), Mask: net.CIDRMask(24, 32)}},
-		},
+	addFallbackAnnotationToService := func(s *v1.Service) *v1.Service {
+		s.Annotations = map[string]string{localWithFallbackAnnotation: ""}
+		return s
 	}
-
-	defaultExternalIDs := map[string]string{
-		"k8s.ovn.org/kind":  "Service",
-		"k8s.ovn.org/owner": fmt.Sprintf("%s/%s", namespace, name),
-	}
-
-	//defaultRouters := []string{"gr-node-a", "gr-node-b"}
-	//defaultSwitches := []string{"switch-node-a", "switch-node-b"}
+	// OCP HACK END
 
 	tc := []struct {
-		name     string
-		service  *v1.Service
-		configs  []lbConfig
-		expected []ovnlb.LB
+		name                string
+		service             *v1.Service
+		config              *lbConfig
+		node                string
+		expectedTargetIPsV4 []string
+		expectedTargetIPsV6 []string
+		expectedV4Changed   bool
+		expectedV6Changed   bool
 	}{
 		{
-			name:    "clusterIP service, standard pods",
+			name:    "cluster ip service", //ETP=cluster by default on all services
 			service: defaultService,
-			configs: []lbConfig{
-				{
-					vips:     []string{"192.168.1.1"},
-					protocol: v1.ProtocolTCP,
-					inport:   80,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+			config: &lbConfig{
+				vips:     []string{"1.2.3.4", "fe10::1"},
+				protocol: v1.ProtocolTCP,
+				inport:   80,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"192.168.0.1"},
+					V6IPs: []string{"fe00:0:0:0:1::2"},
+					Port:  8080,
+				},
+				nodeEndpoints: map[string]lbEndpoints{
+					nodeA: {
+						V4IPs: []string{"192.168.0.1"},
+						V6IPs: []string{"fe00:0:0:0:1::2"},
 						Port:  8080,
 					},
 				},
 			},
-			expected: []ovnlb.LB{
-				{
-					Name:        "Service_openshift-dns/dns-default_TCP_node_router_node-a_merged",
-					ExternalIDs: defaultExternalIDs,
-					Routers:     []string{"gr-node-a", "gr-node-b"},
-					Protocol:    "TCP",
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{"192.168.1.1", 80},
-							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}, {"10.128.1.2", 8080}},
-						},
-					},
-				},
-				{
-					Name:        "Service_openshift-dns/dns-default_TCP_node_switch_node-a",
-					ExternalIDs: defaultExternalIDs,
-					Switches:    []string{"switch-node-a"},
-					Protocol:    "TCP",
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{"192.168.1.1", 80},
-							Targets: []ovnlb.Addr{{"10.128.0.2", 8080}},
-						},
-					},
-				},
-				{
-					Name:        "Service_openshift-dns/dns-default_TCP_node_switch_node-b",
-					ExternalIDs: defaultExternalIDs,
-					Switches:    []string{"switch-node-b"},
-					Protocol:    "TCP",
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{"192.168.1.1", 80},
-							Targets: []ovnlb.Addr{{"10.128.1.2", 8080}},
-						},
-					},
-				},
-			},
+			node:                nodeA,
+			expectedTargetIPsV4: []string{"192.168.0.1"},
+			expectedTargetIPsV6: []string{"fe00:0:0:0:1::2"},
+			expectedV4Changed:   false,
+			expectedV6Changed:   false,
 		},
-	}
+		{
+			name:    "LB service with ETP=local, endpoint count changes",
+			service: getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcpv1),
+			config: &lbConfig{
+				vips:     []string{"1.2.3.4", "fe10::1"},
+				protocol: v1.ProtocolTCP,
+				inport:   80,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"192.168.0.1", "192.168.1.1"},
+					V6IPs: []string{"fe00:0:0:0:1::2", "fe00:0:0:0:2::2"},
 
+					Port: 8080,
+				},
+				nodeEndpoints: map[string]lbEndpoints{
+					nodeA: {
+						V4IPs: []string{"192.168.0.1"},
+						V6IPs: []string{"fe00:0:0:0:1::2"},
+						Port:  8080,
+					},
+				},
+				externalTrafficLocal: true,
+			},
+			node:                nodeA,
+			expectedTargetIPsV4: []string{"192.168.0.1"}, // only the endpoint on nodeA is kept
+			expectedTargetIPsV6: []string{"fe00:0:0:0:1::2"},
+			expectedV4Changed:   true,
+			expectedV6Changed:   true,
+		},
+		{
+			name:    "LB service with ETP=local, endpoint count is the same",
+			service: getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcpv1),
+			config: &lbConfig{
+				vips:     []string{"1.2.3.4", "fe10::1"},
+				protocol: v1.ProtocolTCP,
+				inport:   80,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"192.168.0.1"},
+					V6IPs: []string{"fe00:0:0:0:1::2"},
+
+					Port: 8080,
+				},
+				nodeEndpoints: map[string]lbEndpoints{
+					nodeA: {
+						V4IPs: []string{"192.168.0.1"},
+						V6IPs: []string{"fe00:0:0:0:1::2"},
+						Port:  8080,
+					},
+				},
+				externalTrafficLocal: true,
+			},
+			node:                nodeA,
+			expectedTargetIPsV4: []string{"192.168.0.1"},
+			expectedTargetIPsV6: []string{"fe00:0:0:0:1::2"},
+			expectedV4Changed:   false,
+		},
+		{
+			name:    "LB service with ETP=local, no local endpoints left",
+			service: getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcpv1),
+			config: &lbConfig{
+				vips:     []string{"1.2.3.4", "fe10::1"},
+				protocol: v1.ProtocolTCP,
+				inport:   80,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"192.168.1.1"},     // on nodeB
+					V6IPs: []string{"fe00:0:0:0:2::2"}, // on nodeB
+					Port:  8080,
+				},
+				// nothing on nodeA
+				externalTrafficLocal: true,
+			},
+			node:                nodeA,
+			expectedTargetIPsV4: []string{},
+			expectedTargetIPsV6: []string{}, // no local endpoints
+			expectedV4Changed:   true,
+			expectedV6Changed:   true,
+		},
+		// OCP HACK BEGIN
+		{
+			name:    "LB service with ETP=local, no local endpoints left, localWithFallback annotation",
+			service: addFallbackAnnotationToService(getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcpv1)),
+			config: &lbConfig{
+				vips:     []string{"1.2.3.4", "fe10::1"},
+				protocol: v1.ProtocolTCP,
+				inport:   80,
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"192.168.1.1"},     // on nodeB
+					V6IPs: []string{"fe00:0:0:0:2::2"}, // on nodeB
+					Port:  8080,
+				},
+				// nothing on nodeA
+				externalTrafficLocal: true,
+			},
+			node:                nodeA,
+			expectedTargetIPsV4: []string{"192.168.1.1"},     // fallback to cluster endpoints
+			expectedTargetIPsV6: []string{"fe00:0:0:0:2::2"}, // fallback to cluster endpoints
+			expectedV4Changed:   false,
+			expectedV6Changed:   false,
+		},
+		// OCP HACK END
+	}
 	for i, tt := range tc {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
+			actualTargetIPsV4, actualTargetIPsV6 := makeNodeSwitchTargetIPs(tt.service, tt.node, tt.config)
+			assert.Equal(t, tt.expectedTargetIPsV4, actualTargetIPsV4)
+			assert.Equal(t, tt.expectedTargetIPsV6, actualTargetIPsV6)
 
-			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
-			actual := buildPerNodeLBs(tt.service, tt.configs, defaultNodes)
-			assert.Equal(t, tt.expected, actual, "shared gateway mode not as expected")
-
-			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
-			actual = buildPerNodeLBs(tt.service, tt.configs, defaultNodes)
-			assert.Equal(t, tt.expected, actual, "local gateway mode not as expected")
-		})
-	}
-}
-
-// OCP hack end
-
-// OCP hack begin
-func Test_buildPerNodeLBs_OCPHackForLocalWithFallback(t *testing.T) {
-	oldClusterSubnet := globalconfig.Default.ClusterSubnets
-	oldGwMode := globalconfig.Gateway.Mode
-	defer func() {
-		globalconfig.Gateway.Mode = oldGwMode
-		globalconfig.Default.ClusterSubnets = oldClusterSubnet
-	}()
-	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
-	globalconfig.Default.ClusterSubnets = []globalconfig.CIDRNetworkEntry{{cidr4, 26}}
-
-	name := "router-default"
-	namespace := "openshift-ingress"
-	inport := int32(80)
-	outport := int32(8080)
-
-	defaultService := &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Namespace:   namespace,
-			Annotations: map[string]string{localWithFallbackAnnotation: ""}, // code checks for this annotation
-		},
-		Spec: v1.ServiceSpec{
-			Type:                  v1.ServiceTypeLoadBalancer,
-			ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
-			// add ingress IP
-			ClusterIP:  "192.168.1.1",
-			ClusterIPs: []string{"192.168.1.1"},
-			Ports: []v1.ServicePort{ // don't consider https for simplicity
-				{
-					Name:       "http",
-					Port:       80,
-					Protocol:   v1.ProtocolTCP,
-					TargetPort: intstr.FromInt(80),
-					NodePort:   5,
-				},
-			},
-		},
-		Status: v1.ServiceStatus{
-			LoadBalancer: v1.LoadBalancerStatus{
-				Ingress: []v1.LoadBalancerIngress{{
-					IP: "5.5.5.5",
-				}},
-			},
-		},
-	}
-
-	defaultNodes := []nodeInfo{
-		{
-			name:              "node-a",
-			nodeIPs:           []string{"10.0.0.1"},
-			gatewayRouterName: "gr-node-a",
-			switchName:        "switch-node-a",
-			podSubnets:        []net.IPNet{{IP: net.ParseIP("10.128.0.0"), Mask: net.CIDRMask(24, 32)}},
-		},
-		{
-			name:              "node-b",
-			nodeIPs:           []string{"10.0.0.2"},
-			gatewayRouterName: "gr-node-b",
-			switchName:        "switch-node-b",
-			podSubnets:        []net.IPNet{{IP: net.ParseIP("10.128.1.0"), Mask: net.CIDRMask(24, 32)}},
-		},
-	}
-
-	defaultExternalIDs := map[string]string{
-		"k8s.ovn.org/kind":  "Service",
-		"k8s.ovn.org/owner": fmt.Sprintf("%s/%s", namespace, name),
-	}
-
-	defaultOpts := ovnlb.LBOpts{}
-	noSNATOpts := ovnlb.LBOpts{SkipSNAT: true}
-
-	tc := []struct {
-		name     string
-		service  *v1.Service
-		configs  []lbConfig
-		expected []ovnlb.LB
-	}{
-		{
-			name:    "Load Balancer service with ETP local and local-with-fallback annotation, ovn-networked endpoints, all endpoints are up: no fallback",
-			service: defaultService,
-			configs: []lbConfig{
-				{
-					vips:                 []string{"node"}, //  placeholder for node IP
-					protocol:             v1.ProtocolTCP,
-					inport:               5, // node port
-					externalTrafficLocal: true,
-					hasNodePort:          true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
-						Port:  outport,
-					},
-				},
-				{
-					vips:                 []string{"5.5.5.5"}, // external VIP
-					protocol:             v1.ProtocolTCP,
-					inport:               inport,
-					externalTrafficLocal: true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
-						V6IPs: []string{},
-						Port:  outport,
-					},
-				},
-			},
-			expected: []ovnlb.LB{
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_local_router_node-a",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        noSNATOpts,
-					Routers:     []string{"gr-node-a"},
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}}},
-				},
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_switch_node-a",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        defaultOpts,
-					Switches:    []string{"switch-node-a"},
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}}}},
-				},
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_local_router_node-b",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        noSNATOpts,
-					Routers:     []string{"gr-node-b"},
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}}},
-				},
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_switch_node-b",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        defaultOpts,
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.0.2", Port: 8080}, {IP: "10.128.1.2", Port: 8080}}}},
-					Switches: []string{"switch-node-b"},
-				},
-			},
-		},
-		{
-			name:    "Load Balancer service with ETP local and local-with-fallback annotation, ovn-networked endpoints, endpoint on node-a is down: fallback to ETP Cluster",
-			service: defaultService,
-			configs: []lbConfig{
-				{
-					vips:                 []string{"node"}, //  placeholder for node IP
-					protocol:             v1.ProtocolTCP,
-					inport:               5, // node port
-					externalTrafficLocal: true,
-					hasNodePort:          true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.1.2"}, // only endpoint on node-b is running
-						V6IPs: []string{},
-						Port:  outport,
-					},
-				},
-				{
-					vips:                 []string{"5.5.5.5"}, // external VIP
-					protocol:             v1.ProtocolTCP,
-					inport:               inport,
-					externalTrafficLocal: true,
-					eps: util.LbEndpoints{
-						V4IPs: []string{"10.128.1.2"},
-						V6IPs: []string{},
-						Port:  outport,
-					},
-				},
-			},
-			expected: []ovnlb.LB{
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_router_node-a", // fallback, because no local endpoints left
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        defaultOpts,
-					Routers:     []string{"gr-node-a"},
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // forwarding to endpoint on node-b, as if ETP=Cluster
-						},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}, // forwarding to endpoint on node-b, as if ETP=Cluster
-						},
-					},
-				},
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_switch_node-a",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        defaultOpts,
-					Switches:    []string{"switch-node-a"},
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.1", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}}},
-				},
-
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_local_router_node-b",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        noSNATOpts,
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}}, // endpoint is on node-b, so eTP=local is respected
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}}}, // endpoint is on node-b, so eTP=local is respected
-					Switches: []string(nil), Routers: []string{"gr-node-b"},
-				},
-				{
-					Name:        "Service_openshift-ingress/router-default_TCP_node_switch_node-b",
-					UUID:        "",
-					Protocol:    "TCP",
-					ExternalIDs: defaultExternalIDs,
-					Opts:        defaultOpts,
-					Rules: []ovnlb.LBRule{
-						{
-							Source:  ovnlb.Addr{IP: "169.254.169.3", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "10.0.0.2", Port: 5},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}},
-						{
-							Source:  ovnlb.Addr{IP: "5.5.5.5", Port: 80},
-							Targets: []ovnlb.Addr{{IP: "10.128.1.2", Port: 8080}}}},
-					Switches: []string{"switch-node-b"},
-				},
-			},
-		},
-	}
-
-	for i, tt := range tc {
-		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
-
-			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
-			actual := buildPerNodeLBs(tt.service, tt.configs, defaultNodes)
-			assert.Equal(t, tt.expected, actual, "shared gateway mode not as expected")
-
-			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
-			actual = buildPerNodeLBs(tt.service, tt.configs, defaultNodes)
-			assert.Equal(t, tt.expected, actual, "local gateway mode not as expected")
 		})
 	}
 }
