@@ -8,12 +8,14 @@
 #
 # So this file will change over time.
 
-FROM ubuntu:20.04
+ARG OSV=ubuntu:20.04
+FROM $OSV
 
 ARG K8S_VER="=1.21.1-00"
 ARG OVS_VER
 ARG OVN_VER
 ARG ARTIFACTORY_CERT
+ARG DIST_CODE=focal
 
 USER root
 
@@ -26,7 +28,7 @@ RUN curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add 
 
 # Install OVS and OVN packages.
 RUN \
-echo "deb [trusted=yes] https://${ARTIFACTORY_CERT}@urm.nvidia.com/artifactory/sw-ngn-sdn-debian focal main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list &&\
+echo "deb [trusted=yes] https://${ARTIFACTORY_CERT}@urm.nvidia.com/artifactory/sw-ngn-sdn-debian $DIST_CODE main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list &&\
 apt-get update && apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER &&\
 rm -f /etc/apt/sources.list.d/ngn-sdn-ovn.list
 

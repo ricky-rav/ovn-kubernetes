@@ -17,7 +17,8 @@ deploy:
   helm:
     ovn-kubernetes:
       repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-      branch: main
+      branch: main-merge-upstream
+      values_yaml: values-images.yaml
     multus:
       repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
       branch: main
@@ -45,11 +46,11 @@ cicd:
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
-  promote: yes
+  promote: no
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
-    branch: main
+    branch: main-merge-upstream
     values_yaml: values-images.yaml
 
 
