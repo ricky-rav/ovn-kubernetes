@@ -22,14 +22,12 @@ USER root
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
     iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap
 
-# Get ovn from Nvidia controlled source
-RUN echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
-RUN curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+RUN curl -LO https://dl.k8s.io/release/v1.26.2/bin/linux/arm64/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
 
 # Install OVS and OVN packages.
 RUN \
 echo "deb [trusted=yes] https://${ARTIFACTORY_CERT}@urm.nvidia.com/artifactory/sw-ngn-sdn-debian $DIST_CODE main" | tee -a /etc/apt/sources.list.d/ngn-sdn-ovn.list &&\
-apt-get update && apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER kubectl$K8S_VER &&\
+apt-get update && apt-get install -y openvswitch-switch$OVS_VER openvswitch-common$OVS_VER ovn-common$OVN_VER ovn-host$OVN_VER &&\
 rm -f /etc/apt/sources.list.d/ngn-sdn-ovn.list
 
 RUN mkdir -p /var/run/openvswitch

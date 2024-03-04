@@ -11,14 +11,17 @@ ENV PYTHONDONTWRITEBYTECODE yes
 ARG K8S_VER
 ARG OVS_VER
 ARG OVN_VER
+ARG ARCH
 
 ARG ARTIFACTORY_CERT
 
 # firewall-cmd wrappers
 COPY ./iptables-scripts/firewall-cmd /usr/bin/
-COPY kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 # install epel.repo
 RUN yum install -y epel-release net-tools
+
+RUN curl -LO https://dl.k8s.io/release/v1.26.2/bin/linux/$ARCH/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
+
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
 name=ovn-all-Artifactory \n\
@@ -38,7 +41,7 @@ INSTALL_PKGS=" \
         yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
     yum -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False update && \
     yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \
-        kubectl$K8S_VER python3-openvswitch$OVS_VER-1.el8.noarch openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
+        python3-openvswitch$OVS_VER-1.el8.noarch openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
     yum autoremove -y && \
     yum clean all && rm -rf /var/cache/dnf/* && rm -f /etc/yum.repos.d/ovn.repo /etc/yum.repos.d/ovs.repo
 
