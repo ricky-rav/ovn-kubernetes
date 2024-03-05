@@ -46,11 +46,11 @@ cicd:
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
-  promote: no
+  promote: yes
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
     branch: main-merge-upstream
-    values_yaml: values-images.yaml
+    values_yaml: values-images-latest.yaml
 
 
