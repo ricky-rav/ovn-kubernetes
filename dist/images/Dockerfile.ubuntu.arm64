@@ -22,7 +22,7 @@ USER root
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
     iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap
 
-RUN curl -LO https://dl.k8s.io/release/v1.26.2/bin/linux/arm64/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
+RUN curl -LO https://dl.k8s.io/release/v1.27.11/bin/linux/arm64/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
 
 # Install OVS and OVN packages.
 RUN \

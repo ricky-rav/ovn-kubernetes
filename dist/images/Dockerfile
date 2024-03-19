@@ -20,7 +20,7 @@ COPY ./iptables-scripts/firewall-cmd /usr/bin/
 # install epel.repo
 RUN yum install -y epel-release net-tools
 
-RUN curl -LO https://dl.k8s.io/release/v1.26.2/bin/linux/$ARCH/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
+RUN curl -LO https://dl.k8s.io/release/v1.27.11/bin/linux/$ARCH/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
 
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
