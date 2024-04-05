@@ -1,0 +1,3 @@
+include:
+  - project: 'sdn/sdn-cicd'
+    file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
