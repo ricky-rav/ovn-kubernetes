@@ -1,4 +1,4 @@
-gitlab nv-master 71332e4dbe09f5df3ad98fdd608a40ef55fbaee7 merge with upstream e3ad29066d00085d9a18b49751288d2fe5f3d10a
+upgrade to upstream 361d573f581d22063c3c743d76cacf1830a44654 from a5ef4eeede2
 
 skipped unneeded commits:
 7a87a4667 further fix for SDN-1656, always get the pods on the nodes
@@ -11,8 +11,6 @@ skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd and 5954befeb8a8168f14f6
 mac_binding monitor?
 
 needs to set full mode sysctl net.ipv4.conf.ovn-k8s-mp0.rp_filter=2, needed by internalTrafficPolicy=Local support, commit 944b5c2f60
-note that metrics name changed from ovnkube-master... to ovnkube-controller...
 
 TBD: priority for AddHandlerWithFilterFunc(), AddXXXHandler() functions
 needs to verify SDN-804
-needs to verify rate limiting (especially update, delete...)

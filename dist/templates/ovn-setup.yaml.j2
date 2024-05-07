@@ -105,12 +105,21 @@ rules:
   - portmirrors
   - portmirrors/status
   verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["k8s.ovn.org"]
+  resources:
+  - egressqoses/status
+  verbs: [ "patch", "update" ]
 - apiGroups:
   - k8s.cni.cncf.io
   resources:
+  - ipamclaims
   - network-attachment-definitions
   - multi-networkpolicies
   verbs: ["get", "list", "watch"]
+- apiGroups: [ "k8s.cni.cncf.io" ]
+  resources:
+      - ipamclaims/status
+  verbs: [ "patch", "update" ]
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch", "update"]
@@ -152,6 +161,7 @@ rules:
 - apiGroups:
   - k8s.cni.cncf.io
   resources:
+  - ipamclaims
   - network-attachment-definitions
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
@@ -167,12 +177,20 @@ rules:
       - nodes/status
       - pods/status
   verbs: [ "patch", "update" ]
+- apiGroups: [ "k8s.cni.cncf.io" ]
+  resources:
+      - ipamclaims/status
+  verbs: [ "patch", "update" ]
 - apiGroups:
   - k8s.ovn.org
   resources:
   - portmirrors
   - portmirrors/status
   verbs: ["get", "list", "watch", "update"]
+- apiGroups: ["k8s.ovn.org"]
+  resources:
+  - egressqoses/status
+  verbs: [ "patch", "update" ]
 
 ---
 # RBAC policies for ovnk8s-node-dpu-host
