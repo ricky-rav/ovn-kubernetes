@@ -63,7 +63,7 @@ RUN  mkdir -p /usr/libexec/cni/
 
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the rpm
-COPY ovnkube ovndbchecker /usr/bin/
+COPY ovnkube ovndbchecker ovnkube-identity /usr/bin/
 COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 COPY git_info /root/
