@@ -51,7 +51,6 @@ func CreateDefaultRouteToExternal(nbClient libovsdbclient.Client, nodeName strin
 				return false
 			}
 			return util.ContainsCIDR(subnet, itemCIDR) &&
-				lrsr.Nexthop == gatewayIP.IP.String() &&
 				lrsr.Policy != nil && *lrsr.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
 		}
 		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(nbClient, types.OVNClusterRouter, &lrsr, p); err != nil {
