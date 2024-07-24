@@ -5,6 +5,6 @@ version = "1.0.0"
 [oss.excluded]
 
 [[oss.excluded.directories]]
-paths = ['.*test/e2e']
-comment = 'Exclude e2e package repos'
+paths = ['.*test/']
+comment = 'Exclude test package repos'
 
