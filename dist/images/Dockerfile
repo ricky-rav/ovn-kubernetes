@@ -5,8 +5,8 @@ USER root
 ENV PYTHONDONTWRITEBYTECODE yes
 
 # Get openvswitch from Nvidia controlled source
-# Based on:OVS_VER=3.1.2.88c01171.f04b23af OVN_VER=23.06.0.309e6bfb.e2f4a095
-# Based on:OVS_VER=3.1.2.88c01171.f04b23af OVN_VER=23.06.0.309e6bfb.e2f4a095
+# Based on:OVS_VER=3.1.2.54e71198.15843608 OVN_VER=23.06.0.7e36682d.1c266a67
+# Based on:OVS_VER=3.1.2.54e71198.15843608 OVN_VER=23.06.0.7e36682d.1c266a67
 
 ARG K8S_VER
 ARG OVS_VER
@@ -20,7 +20,7 @@ COPY ./iptables-scripts/firewall-cmd /usr/bin/
 # install epel.repo
 RUN yum install -y epel-release net-tools
 
-RUN curl -LO https://dl.k8s.io/release/v1.27.11/bin/linux/$ARCH/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
+RUN  curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.11/bin/linux/$ARCH/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
 
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
