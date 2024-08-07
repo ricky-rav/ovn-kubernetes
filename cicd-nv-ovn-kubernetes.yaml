@@ -45,6 +45,7 @@ cicd:
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
   promote: yes
+  latestImageNameTag: latest-nv-1.2
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
