@@ -34,7 +34,7 @@ metadata:
   name: ovn-k8s-configmap
 rules:
 - apiGroups: [""]
-  resources: ["configmaps"]
+  resources: ["configmaps", "secrets"]
   verbs: ["get", "watch", "list"]
 
 
