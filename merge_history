@@ -1,16 +1,15 @@
 upgrade to upstream 701b8e077c6
 
-skipped unneeded commits:
-7a87a4667 further fix for SDN-1656, always get the pods on the nodes
-61e434c5e SDN-1656 fail to add gateway router port IPs to policy addressse handlePodsOnNode
+merge downstream cdfd27b4266f187a86386eb68b786e75e56d634f and upstream ffddd06ec12e43af0397bca8e36adedf8df441b1
 
-removed commit https://github.com/ovn-org/ovn-kubernetes/commit/9086e574a8e73a27a827524a45badb427d8863d2
-skipped commit ba9d47637ae2393966b70ab2098f405aa65c12a5 delete stale chassis private
-skipped commit 07cd451ae3d920c5784d8e07f48ede96548411cd and 5954befeb8a8168f14f69f3a5a39f381514f1ea5 as XDP may needs some more change.
+perNADConf
+inter-connect
+ovn-primary support
 
-mac_binding monitor?
 
-needs to set full mode sysctl net.ipv4.conf.ovn-k8s-mp0.rp_filter=2, needed by internalTrafficPolicy=Local support, commit 944b5c2f60
+note https://gitlab-master.nvidia.com/sdn/ovn-kubernetes/-/commit/5a15844217b1466aa5cedb3ea7f40df2eaf6cbe7, change gateway.GetGatewayBridgeIface() to gateway.GetGatewayIface()
 
-TBD: priority for AddHandlerWithFilterFunc(), AddXXXHandler() functions
-needs to verify SDN-804
+go-controller/pkg/ovn/hybrid.go
+
+git diff -u 701b8e077c6 ffddd06ec12e43af0397bca8e36
+
