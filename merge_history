@@ -5,6 +5,7 @@ merge downstream cdfd27b4266f187a86386eb68b786e75e56d634f and upstream ffddd06ec
 perNADConf
 inter-connect
 ovn-primary support
+is already set/not set yet
 
 
 note https://gitlab-master.nvidia.com/sdn/ovn-kubernetes/-/commit/5a15844217b1466aa5cedb3ea7f40df2eaf6cbe7, change gateway.GetGatewayBridgeIface() to gateway.GetGatewayIface()
