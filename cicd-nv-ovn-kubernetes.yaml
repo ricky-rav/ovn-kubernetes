@@ -50,6 +50,6 @@ artifacts:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
     branch: nv-1.2
-    values_yaml: values-images-latest.yaml
+    values_yaml: values-images.yaml
 
 
