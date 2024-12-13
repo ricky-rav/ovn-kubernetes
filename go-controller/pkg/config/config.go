@@ -74,6 +74,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		RawNamespacesForInterNetworkServiceAccess: "",
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -290,6 +291,14 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// RawNamespacesForInterNetworkServiceAccess holds the unparsed NamespacesForInterNetworkServiceAccess. Should only be
+	// used inside config module.
+	RawNamespacesForInterNetworkServiceAccess string `gcfg:"namespaces-for-inter-network-service-access"`
+
+	// NamespacesForInterNetworkServiceAccess holds a list of namespaces in the default network that
+	// are to be granted access to cluster IP services in user-defined networks.
+	NamespacesForInterNetworkServiceAccess []string
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -939,11 +948,19 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "udn-allowed-default-services",
-		Usage: "a list of namespaced names of default cluster network services accessible from primary" +
-			"user-defined networks. If not specified defaults to [\"default/kubernetes\", \"kube-system/kube-dns\"]." +
+		Usage: "a list of namespaced names of default cluster network services accessible from primary " +
+			"user-defined networks. If not specified defaults to [\"default/kubernetes\", \"kube-system/kube-dns\"]. " +
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.StringFlag{
+		Name: "namespaces-for-inter-network-service-access",
+		Usage: "a list of namespaces in the default network are to be granted access " +
+			"to cluster IP services in user-defined networks. Empty by default." +
+			"Only used when enable-network-segmentation is set",
+		Value:       Default.RawNamespacesForInterNetworkServiceAccess,
+		Destination: &cliConfig.Default.RawNamespacesForInterNetworkServiceAccess,
 	},
 }
 
@@ -2158,6 +2175,8 @@ func completeDefaultConfig(allSubnets *ConfigSubnets) error {
 		return fmt.Errorf("UDN allowed services field is invalid: %v", err)
 	}
 
+	Default.NamespacesForInterNetworkServiceAccess = parseCommaSeparatedList(Default.RawNamespacesForInterNetworkServiceAccess)
+
 	Default.HostMasqConntrackZone = Default.ConntrackZone + 1
 	Default.OVNMasqConntrackZone = Default.ConntrackZone + 2
 	Default.HostNodePortConntrackZone = Default.ConntrackZone + 3
@@ -2184,6 +2203,15 @@ func parseServicesNamespacedNames(servicesRaw string) ([]string, error) {
 		services = append(services, svcKey)
 	}
 	return services, nil
+}
+
+// parseCommaSeparatedList splits the input string by `,` and returns a slice of keys. It trims spaces between the elements.
+func parseCommaSeparatedList(s string) []string {
+	var list []string
+	for _, item := range strings.Split(s, ",") {
+		list = append(list, strings.TrimSpace(item))
+	}
+	return list
 }
 
 // getConfigFilePath returns config file path and 'true' if the config file is

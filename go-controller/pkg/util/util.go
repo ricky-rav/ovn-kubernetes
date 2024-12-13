@@ -605,6 +605,15 @@ func IsUDNEnabledService(key string) bool {
 	return false
 }
 
+func HasNamespaceAccessToUDNServices(namespace string) bool {
+	for _, ns := range config.Default.NamespacesForInterNetworkServiceAccess {
+		if ns == namespace {
+			return true
+		}
+	}
+	return false
+}
+
 // ServiceFromEndpointSlice returns the namespaced name of the service that corresponds to the given endpointSlice
 // in the given network
 func ServiceFromEndpointSlice(eps *discovery.EndpointSlice, netInfo NetInfo) (k8stypes.NamespacedName, error) {

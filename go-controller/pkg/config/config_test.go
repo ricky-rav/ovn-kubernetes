@@ -1648,6 +1648,26 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
+	It("accepts a config with valid namespaces for inter network service access", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
+namespaces-for-inter-network-service-access= ns1, ns2
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err = InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(Default.NamespacesForInterNetworkServiceAccess).To(gomega.HaveLen(2))
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-config-file=" + cfgFile.Name(),
+		}
+		err = app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
 	Describe("OvnDBAuth operations", func() {
 		var certFile, keyFile, caFile string
 
