@@ -37,9 +37,7 @@ test:
 cicd:
   skip_make_check: false
   skip_SDN_tests: false
-  SDN_LOCK_lock_on_failure: false 
-  sdn_cicd_branch: master
-
+  SDN_LOCK_lock_on_failure: false
 
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
