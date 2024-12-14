@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	metaapplyv1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	corev1informer "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/tools/reference"
@@ -52,6 +53,8 @@ func (n *networkInUseError) Error() string {
 }
 
 type Controller struct {
+	// kubeClient adds a label to namespaces in a UDN
+	kubeClient kubernetes.Interface
 	// cudnController manage ClusterUserDefinedNetwork CRs.
 	cudnController controller.Controller
 	// udnController manage UserDefinedNetwork CRs.
@@ -82,9 +85,13 @@ type Controller struct {
 	eventRecorder               record.EventRecorder
 }
 
-const defaultNetworkInUseCheckInterval = 1 * time.Minute
+const (
+	defaultNetworkInUseCheckInterval = 1 * time.Minute
+	labelForNamespace                = "k8s.ovn.org/primary-user-defined-network"
+)
 
 func New(
+	kubeClient kubernetes.Interface,
 	nadClient netv1clientset.Interface,
 	nadInfomer netv1infomer.NetworkAttachmentDefinitionInformer,
 	udnClient userdefinednetworkclientset.Interface,
@@ -98,6 +105,7 @@ func New(
 	udnLister := udnInformer.Lister()
 	cudnLister := cudnInformer.Lister()
 	c := &Controller{
+		kubeClient:                  kubeClient,
 		nadClient:                   nadClient,
 		nadLister:                   nadInfomer.Lister(),
 		udnClient:                   udnClient,
@@ -360,7 +368,8 @@ func (c *Controller) reconcileUDN(key string) error {
 	}
 
 	udn, err := c.udnLister.UserDefinedNetworks(namespace).Get(name)
-	if err != nil && !kerrors.IsNotFound(err) {
+	toDelete := kerrors.IsNotFound(err)
+	if err != nil && !toDelete {
 		return fmt.Errorf("failed to get UserDefinedNetwork %q from cache: %v", key, err)
 	}
 
@@ -376,7 +385,71 @@ func (c *Controller) reconcileUDN(key string) error {
 		return updateStatusErr
 	}
 
-	return errors.Join(syncErr, updateStatusErr)
+	err = errors.Join(syncErr, updateStatusErr)
+	if err != nil {
+		return fmt.Errorf("failed to reconcile UserDefinedNetwork %q: %w", key, err)
+	}
+
+	return c.syncNamespaceUDNLabel(namespace, name, toDelete)
+}
+
+// sync label for all namespaces selected by the CUDN
+func (c *Controller) syncNamespaceUDNLabelForCUDN(cudnName string, toDelete bool) error {
+	klog.Infof("riccardo syncNamespaceUDNLabelForCUDN cudnName %s toDelete %t", cudnName, toDelete)
+	c.namespaceTrackerLock.Lock()
+	defer c.namespaceTrackerLock.Unlock()
+
+	namespaceSet, exist := c.namespaceTracker[cudnName]
+	if !exist || len(namespaceSet) == 0 {
+		klog.Infof("riccardo syncNamespaceUDNLabelForCUDN for CUDN %s namespaceSet exists: %t, len cache %d", cudnName, exist, len(namespaceSet))
+		return nil
+	}
+
+	for ns := range namespaceSet {
+		klog.Infof("riccardo syncNamespaceUDNLabelForCUDN calling syncNamespaceUDNLabel on namespaceName %s networkName %s", ns, cudnName)
+		if err := c.syncNamespaceUDNLabel(ns, cudnName, toDelete); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncNamespaceUDNLabel ensures that the namespace has the correct label for the UDN.
+func (c *Controller) syncNamespaceUDNLabel(namespaceName, networkName string, toDelete bool) error {
+	klog.Infof("riccardo syncNamespaceUDNLabel namespaceName %s networkName %s, UDNToDelete %t", namespaceName, networkName, toDelete)
+	namespace, err := c.namespaceInformer.Lister().Get(namespaceName)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get namespace %q from cache: %w", namespaceName, err)
+	}
+
+	namespaceCopy := namespace.DeepCopy()
+
+	if namespaceCopy.Labels == nil {
+		namespaceCopy.Labels = map[string]string{}
+	}
+
+	value, ok := namespaceCopy.Labels[labelForNamespace]
+	if !toDelete && (!ok || value != networkName) {
+		klog.Infof("riccardo syncNamespaceUDNLabel setting label %s=%s for namespace %s", labelForNamespace, networkName, namespaceName)
+		namespaceCopy.Labels[labelForNamespace] = networkName
+		_, err = c.kubeClient.CoreV1().Namespaces().Update(context.Background(), namespaceCopy, metav1.UpdateOptions{})
+
+		if err != nil {
+			return fmt.Errorf("failed to update namespace %q with %s=%s label: %w", namespaceName, labelForNamespace, networkName, err)
+		}
+	} else if toDelete && ok {
+		klog.Infof("riccardo syncNamespaceUDNLabel removing label %s for namespace %s", labelForNamespace, namespaceName)
+		delete(namespaceCopy.Labels, labelForNamespace)
+		_, err = c.kubeClient.CoreV1().Namespaces().Update(context.Background(), namespaceCopy, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to remove label %s from namespace %q: %w", labelForNamespace, namespaceName, err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefinedNetwork) (*netv1.NetworkAttachmentDefinition, error) {
@@ -494,7 +567,7 @@ func (c *Controller) cudnNeedUpdate(_ *userdefinednetworkv1.ClusterUserDefinedNe
 }
 
 // reconcileUDN get ClusterUserDefinedNetwork CR key and reconcile it according to spec.
-// It creates NADs according to spec at the spesified selected namespaces.
+// It creates NADs according to spec at the specified selected namespaces.
 // The NAD objects are created with the same key as the request CR, having both kinds have the same key enable
 // the controller to act on NAD changes as well and reconciles NAD objects (e.g: in case NAD is deleted it will be re-created).
 func (c *Controller) reconcileCUDN(key string) error {
@@ -504,7 +577,9 @@ func (c *Controller) reconcileCUDN(key string) error {
 	}
 
 	cudn, err := c.cudnLister.Get(name)
-	if err != nil && !kerrors.IsNotFound(err) {
+	toDelete := kerrors.IsNotFound(err)
+	klog.Infof("riccardo reconcileCUDN cudnName %s toDelete %t", name, toDelete)
+	if err != nil && !toDelete {
 		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q from cache: %v", key, err)
 	}
 
@@ -520,7 +595,16 @@ func (c *Controller) reconcileCUDN(key string) error {
 		return updateStatusErr
 	}
 
-	return errors.Join(syncErr, updateStatusErr)
+	err = errors.Join(syncErr, updateStatusErr)
+	if err != nil {
+		return fmt.Errorf("failed to reconcile ClusterUserDefinedNetwork %q: %w", key, err)
+	}
+
+	if !toDelete {
+		return c.syncNamespaceUDNLabelForCUDN(name, false)
+	}
+	return nil
+
 }
 
 func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) ([]netv1.NetworkAttachmentDefinition, error) {
@@ -543,6 +627,11 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 						nsToDelete, cudnName, err))
 				} else {
 					c.namespaceTracker[cudnName].Delete(nsToDelete)
+					if err := c.syncNamespaceUDNLabel(nsToDelete, cudnName, true); err != nil {
+						errs = append(errs, err)
+						c.namespaceTracker[cudnName].Insert(nsToDelete) // put it back in until we properly sync its namespace labels
+
+					}
 				}
 			}
 
@@ -590,6 +679,11 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 				nsToDelete, cudnName, err))
 		} else {
 			c.namespaceTracker[cudnName].Delete(nsToDelete)
+			if err := c.syncNamespaceUDNLabel(nsToDelete, cudnName, true); err != nil {
+				errs = append(errs, err)
+				c.namespaceTracker[cudnName].Insert(nsToDelete) // put it back in until we properly sync the namespace labels
+
+			}
 		}
 	}
 

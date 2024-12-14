@@ -130,6 +130,7 @@ func NewClusterManager(ovnClient *util.OVNClusterManagerClientset, wf *factory.W
 
 	if util.IsNetworkSegmentationSupportEnabled() {
 		udnController := udncontroller.New(
+			ovnClient.KubeClient,
 			ovnClient.NetworkAttchDefClient, wf.NADInformer(),
 			ovnClient.UserDefinedNetworkClient,
 			wf.UserDefinedNetworkInformer(), wf.ClusterUserDefinedNetworkInformer(),
