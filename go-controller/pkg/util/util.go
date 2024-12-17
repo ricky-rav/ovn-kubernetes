@@ -606,10 +606,18 @@ func IsUDNEnabledService(key string) bool {
 }
 
 func HasNamespaceAccessToUDNServices(namespace string) bool {
+	klog.Infof("Checking if namespace %s has access to inter-network services: %s", namespace, config.Default.NamespacesForInterNetworkServiceAccess)
+	if config.Default.NamespacesForInterNetworkServiceAccess == nil {
+		return false
+	}
+
 	for _, ns := range config.Default.NamespacesForInterNetworkServiceAccess {
+		klog.Infof("Checking config namespace %v against input namespace %v", ns, namespace)
 		if ns == namespace {
+			klog.Infof("Checking config namespace %v against input namespace %v... MATCH!", ns, namespace)
 			return true
 		}
+		klog.Infof("Checking config namespace %v against input namespace %v... NO match!", ns, namespace)
 	}
 	return false
 }

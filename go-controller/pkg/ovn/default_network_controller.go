@@ -3,6 +3,7 @@ package ovn
 import (
 	"context"
 	"fmt"
+	"net"
 	"reflect"
 	"sync"
 	"time"
@@ -141,6 +142,8 @@ type DefaultNetworkController struct {
 	zoneChassisHandler *zoneic.ZoneChassisHandler
 
 	gatewayTopologyFactory *topology.GatewayTopologyFactory
+
+	localNodesToManagementIPs map[string][]*net.IPNet
 }
 
 // NewDefaultNetworkController creates a new OVN controller for creating logical network
@@ -233,8 +236,42 @@ func newDefaultNetworkControllerCommon(cnci *CommonNetworkControllerInfo,
 
 	oc.ovnClusterLRPToJoinIfAddrs = gwLRPIfAddrs
 
+	if err = oc.initializeLocalNodesToManagementIPs(); err != nil {
+		return nil, fmt.Errorf("failed to initialize local nodes to management IPs: %v", err)
+	}
+
 	oc.initRetryFramework()
 	return oc, nil
+}
+
+// TODO maybe move all functions related to inter network access to another file
+func (oc *DefaultNetworkController) initializeLocalNodesToManagementIPs() error {
+	localNodes, err := oc.GetLocalZoneNodes()
+	if err != nil {
+		return fmt.Errorf("unable to get local zone nodes to start openshift route controller: %w", err)
+	}
+	localNodeNames := make([]string, 0, len(localNodes))
+	for _, node := range localNodes {
+		localNodeNames = append(localNodeNames, node.Name)
+	}
+
+	oc.localNodesToManagementIPs = make(map[string][]*net.IPNet)
+
+	klog.Infof("riccardo Caching management port IPs, localNodes: %s", localNodeNames)
+	for _, node := range localNodes {
+		hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
+		if err != nil {
+			return err
+		}
+		managementIPs := make([]*net.IPNet, 0, len(hostSubnets))
+		for _, hostSubnet := range hostSubnets {
+			managementIPs = append(managementIPs,
+				util.GetNodeManagementIfAddr(hostSubnet),
+			)
+		}
+		oc.localNodesToManagementIPs[node.Name] = managementIPs
+	}
+	return nil
 }
 
 func (oc *DefaultNetworkController) initRetryFramework() {

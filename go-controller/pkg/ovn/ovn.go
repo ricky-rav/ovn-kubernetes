@@ -11,18 +11,23 @@ import (
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	anpcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	kapi "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/scheme"
 	listers "k8s.io/client-go/listers/core/v1"
 	ref "k8s.io/client-go/tools/reference"
@@ -119,6 +124,7 @@ func networkStatusAnnotationsChanged(oldPod, newPod *kapi.Pod) bool {
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensurePod(oldPod, pod *kapi.Pod, addPort bool) error {
+	var err error
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -127,16 +133,25 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *kapi.Pod, addPort boo
 	// Add podIPs on no host subnet Nodes to the namespace address_set
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
-		return oc.ensureRemotePodIP(oldPod, pod, addPort)
-	}
+		err = oc.ensureRemotePodIP(oldPod, pod, addPort)
 
-	if oc.isPodScheduledinLocalZone(pod) {
+	} else if oc.isPodScheduledinLocalZone(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-		return oc.ensureLocalZonePod(oldPod, pod, addPort)
+		err = oc.ensureLocalZonePod(oldPod, pod, addPort)
+
+	} else {
+		klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
+		err = oc.ensureRemoteZonePod(oldPod, pod, addPort)
 	}
 
-	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	return oc.ensureRemoteZonePod(oldPod, pod, addPort)
+	if err != nil {
+		return err
+	}
+	err = oc.syncAccessToUDNServicesForSelectedNamespaces(oldPod, pod)
+	if err != nil {
+		return fmt.Errorf("failed to ensure access to UDN services for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
 }
 
 // ensureLocalZonePod tries to set up a local zone pod. It returns nil on success and error on failure; failure
@@ -267,6 +282,10 @@ func (oc *DefaultNetworkController) removePod(pod *kapi.Pod, portInfo *lpInfo) e
 		return err
 	}
 
+	if err := oc.syncAccessToUDNServicesForSelectedNamespaces(pod, nil); err != nil {
+		return fmt.Errorf("failed to remove access to UDN services for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+
 	oc.forgetPodReleasedBeforeStartup(string(pod.UID), ovntypes.DefaultNetworkName)
 	return nil
 }
@@ -337,6 +356,151 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *kapi.Pod) error {
 	}
 
 	return nil
+}
+
+type managementIP struct {
+	IP   *net.IPNet
+	IsV4 bool
+}
+
+const (
+	podExternalIDKey = "pod"
+	// namespaceExternalIDKey = "namespace"
+)
+
+func (oc *DefaultNetworkController) addLRPsForExtraServiceAccess(pod *v1.Pod) error {
+	klog.Infof("riccardo addLRPsForExtraServiceAccess for pod %s/%s", pod.Namespace, pod.Name)
+	// if pod is host networked, skip it
+	if util.PodWantsHostNetwork(pod) {
+		return nil
+	}
+
+	// Add one LRP per pod IP per service CIDR
+	podKey := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+	for _, podIP := range pod.Status.PodIPs {
+		var IPFamilyDigit string
+		isPodIPAddressV4 := net.ParseIP(podIP.IP).To4() != nil
+		if isPodIPAddressV4 {
+			IPFamilyDigit = "4"
+		} else {
+			IPFamilyDigit = "6"
+		}
+
+		for _, serviceCIDR := range config.Kubernetes.ServiceCIDRs {
+			if isPodIPAddressV4 != (serviceCIDR.IP.To4() != nil) {
+				continue
+			}
+
+			for node, managementPortIPEntries := range oc.localNodesToManagementIPs {
+				var managementIP string
+				for _, managementIPEntry := range managementPortIPEntries {
+					if isPodIPAddressV4 == (managementIPEntry.IP.To4() != nil) {
+						managementIP = managementIPEntry.IP.String()
+						break
+					}
+				}
+				if managementIP == "" {
+					klog.Warningf("No management IPv%s address found for node %s", IPFamilyDigit, node)
+					continue
+				}
+
+				klog.Infof("riccardo Adding LRP on node %q for managementIP %s", node, managementIP)
+
+				match := fmt.Sprintf("ip%s.src == %s && ip%s.dst == %s",
+					IPFamilyDigit, podIP.IP, IPFamilyDigit, serviceCIDR.String())
+
+				reroutePolicy := nbdb.LogicalRouterPolicy{
+					Match:    match,
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					Nexthops: []string{managementIP},
+					Priority: types.InterNetworkServiceAccessPriority,
+					// Options:  map[string]string{"pkt_mark": fmt.Sprintf("%d", pktMark)},
+					ExternalIDs: map[string]string{podExternalIDKey: podKey},
+				}
+				klog.Infof("riccardo Adding LRP on node %q router %s: %+v", node, types.OVNClusterRouter, reroutePolicy)
+				if err := libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(
+					oc.nbClient,
+					types.OVNClusterRouter,
+					&reroutePolicy,
+					func(item *nbdb.LogicalRouterPolicy) bool { return false }); err != nil {
+					return fmt.Errorf("failed to create LRP for pod %s: %w", podKey, err)
+				}
+			}
+
+		}
+	}
+	return nil
+}
+
+func (oc *DefaultNetworkController) deleteLRPsForExtraServiceAccess(pod *v1.Pod) error {
+	podKey := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+	klog.Infof("riccardo deleteLRPsForExtraServiceAccess for pod %s", podKey)
+
+	// if pod is host networked, skip it
+	if util.PodWantsHostNetwork(pod) {
+		return nil
+	}
+
+	klog.Infof("riccardo Deleting LRPs for pod %s/%s", pod.Namespace, pod.Name)
+	ovnRouter := types.OVNClusterRouter
+	if err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(
+		oc.nbClient,
+		ovnRouter,
+		func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.Priority == types.InterNetworkServiceAccessPriority &&
+				item.Action == nbdb.LogicalRouterPolicyActionReroute &&
+				item.ExternalIDs[podExternalIDKey] == podKey
+		}); err != nil {
+		return fmt.Errorf("failed to delete LRP for pod %s: %w", podKey, err)
+	}
+	return nil
+}
+
+func samePodIPs(oldPod, newPod *kapi.Pod) bool {
+	res := sets.New(oldPod.Status.PodIPs...).Equal(sets.New(newPod.Status.PodIPs...))
+	klog.Infof("riccardo samePodIPs comparing old pod IPs %v with new pod IPs %v; areTheSame=%t", oldPod.Status.PodIPs, newPod.Status.PodIPs, res)
+	return res
+}
+
+func (oc *DefaultNetworkController) syncAccessToUDNServicesForSelectedNamespaces(oldPod, newPod *kapi.Pod) error {
+	klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces started")
+	if oldPod != nil {
+		if !util.HasNamespaceAccessToUDNServices(oldPod.Namespace) {
+			klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces oldPod %s/%s has no access to UDN services", oldPod.Namespace, oldPod.Name)
+			return nil
+		}
+	} else if newPod != nil {
+		if !util.HasNamespaceAccessToUDNServices(newPod.Namespace) {
+			klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces newPod %s/%s has no access to UDN services", newPod.Namespace, newPod.Name)
+			return nil
+		}
+	}
+
+	var err error
+	// no need to differentiate between L2 and L3: default cluster network is always L3
+	// (otherwise you'd have to scan all NADs, add the LRP to the gw router if there are any L2 primary NADs;
+	// add also to the cluster router if there are any L3 primary NADs)
+
+	if oldPod != nil && newPod == nil { // deletion
+		klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces deletion on pod %s/%s", oldPod.Namespace, oldPod.Name)
+		err = oc.deleteLRPsForExtraServiceAccess(oldPod)
+
+	} else if oldPod == nil && newPod != nil { // creation
+		klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces creation on pod %s/%s", newPod.Namespace, newPod.Name)
+		err = oc.addLRPsForExtraServiceAccess(newPod)
+
+	} else if oldPod != nil && newPod != nil && !samePodIPs(oldPod, newPod) { // update
+		klog.Infof("riccardo syncAccessToUDNServicesForSelectedNamespaces update on pod %s/%s", newPod.Namespace, newPod.Name)
+		err = oc.deleteLRPsForExtraServiceAccess(oldPod)
+		if err != nil {
+			return fmt.Errorf("failed to delete LRPs during pod %s/%s update: %w", newPod.Namespace, newPod.Name, err)
+		}
+		err = oc.addLRPsForExtraServiceAccess(newPod)
+		if err != nil {
+			err = fmt.Errorf("failed to add LRPs during pod %s/%s update: %w", newPod.Namespace, newPod.Name, err)
+		}
+	}
+	return err
 }
 
 // WatchEgressFirewall starts the watching of egressfirewall resource and calls
