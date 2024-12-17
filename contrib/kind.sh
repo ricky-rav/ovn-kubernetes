@@ -424,6 +424,7 @@ print_params() {
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_MTU= $OVN_MTU"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     # echo "OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS=$OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS"
      echo ""
 }
 
@@ -573,6 +574,7 @@ set_default_params() {
   KIND_NUM_MASTER=1
   OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-false}
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
+  # OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS=${OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS:-""}
 
 
   if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
@@ -876,6 +878,8 @@ create_ovn_kube_manifests() {
     --enable-dnsnameresolver="${OVN_ENABLE_DNSNAMERESOLVER}" \
     --mtu="${OVN_MTU}" \
     --enable-observ="${OVN_OBSERV_ENABLE}"
+    # --ovn-namespaces-for-inter-network-service-access="$OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS" \
+
   popd
 }
 

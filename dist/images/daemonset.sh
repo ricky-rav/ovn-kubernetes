@@ -97,6 +97,7 @@ OVN_ENABLE_SVC_TEMPLATE_SUPPORT="true"
 OVN_ENABLE_DNSNAMERESOLVER="false"
 OVN_NOHOSTSUBNET_LABEL=""
 OVN_DISABLE_REQUESTEDCHASSIS="false"
+# OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS=""
 # IN_UPGRADE is true only if called by upgrade-ovn.sh during the upgrade test,
 # it will render only the parts in ovn-setup.yaml related to RBAC permissions.
 IN_UPGRADE=
@@ -291,10 +292,10 @@ while [ "$1" != "" ]; do
     ;;
   --v4-transit-switch-subnet)
     OVN_V4_TRANSIT_SWITCH_SUBNET=$VALUE
-    ;; 
+    ;;
   --v6-transit-switch-subnet)
     OVN_V6_TRANSIT_SWITCH_SUBNET=$VALUE
-    ;; 
+    ;;
   --netflow-targets)
     OVN_NETFLOW_TARGETS=$VALUE
     ;;
@@ -370,6 +371,9 @@ while [ "$1" != "" ]; do
   --ovn_disable_requestedchassis)
     OVN_DISABLE_REQUESTEDCHASSIS=$value
     ;;
+  # --ovn-namespaces-for-inter-network-service-access)
+  #   OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS=$VALUE
+  #  ;;
   *)
     echo "WARNING: unknown parameter \"$PARAM\""
     exit 1
@@ -570,6 +574,10 @@ echo "ovn_nohostsubnet_label: ${ovn_nohostsubnet_label}"
 
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS}
 echo "ovn_disable_requestedchassis: ${ovn_disable_requestedchassis}"
+
+# ovn_namespaces_for_inter_network_service_access=${OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS}
+# echo "ovn_namespaces_for_inter_network_service_access: ${ovn_namespaces_for_inter_network_service_access}"
+
 
 ovn_image=${ovnkube_image} \
   ovnkube_compact_mode_enable=${ovnkube_compact_mode_enable} \
