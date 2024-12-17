@@ -321,6 +321,10 @@ ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
 
+ovn_namespaces_for_inter_network_service_access="openshift-ingress,openshift-dummy-ns"
+echo "ovnkube.sh, OVN_NAMESPACES_FOR_INTER_NETWORK_SERVICE_ACCESS=${ovn_namespaces_for_inter_network_service_access}"
+
+
 # Determine the ovn rundir.
 if [[ -f /usr/bin/ovn-appctl ]]; then
   # ovn-appctl is present. Use new ovn run dir path.
@@ -2092,6 +2096,7 @@ ovnkube-controller-with-node() {
     --ovn-metrics-bind-address ${ovn_metrics_bind_address} \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller-with-node.pid \
     --disable-udn-host-isolation \
+    --namespaces-for-inter-network-service-access="${ovn_namespaces_for_inter_network_service_access}" \
     --zone ${ovn_zone} &
 
   wait_for_event attempts=3 process_ready ovnkube-controller-with-node
@@ -2297,6 +2302,7 @@ ovn-cluster-manager() {
     --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_cluster_manager_metrics_bind_address} \
     --metrics-enable-pprof \
+    --namespaces-for-inter-network-service-access="${ovn_namespaces_for_inter_network_service_access}" \
     --pidfile ${OVN_RUNDIR}/ovnkube-cluster-manager.pid &
 
   echo "=============== ovn-cluster-manager ========== running"
