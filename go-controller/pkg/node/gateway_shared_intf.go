@@ -76,6 +76,12 @@ const (
 	// nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map
 	nftablesUDNServiceMarkChain = "udn-service-mark"
 
+	// nftablesDefaultToUDNClusterIPsServiceMarkChain is a regular chain matching incoming traffic
+	// src IP against a set (nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set) and
+	// destination IP, proto and port against the following verdict maps:
+	// nftablesDefaultToUDNMarkV4Map, nftablesDefaultToUDNMarkV6Map
+	nftablesDefaultToUDNClusterIPsServiceMarkChain = "default-to-udn-cluster-ips-service-mark"
+
 	// nftablesUDNMarkNodePortsMap is a verdict maps containing
 	// localNodeIP / protocol / port keys indicating traffic that
 	// should be marked with a UDN specific value, which is used to direct the traffic
@@ -88,6 +94,20 @@ const (
 	// to the appropriate network.
 	nftablesUDNMarkExternalIPsV4Map = "udn-mark-external-ips-v4"
 	nftablesUDNMarkExternalIPsV6Map = "udn-mark-external-ips-v6"
+
+	// nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set is a set containing
+	// pod IPs belonging to namespaces that are allowed to access UDN services.
+	nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set = "default-pod-ips-with-inter-network-service-access-v4-set"
+	nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set = "default-pod-ips-with-inter-network-service-access-v6-set"
+
+	// nftablesUDNMarkClusterIPsV4Map is a verdict map containing
+	// clusterIP / protocol / port keys matching against traffic that
+	// is destined to services in UDNs. This will only be applied to traffic whose source
+	// IP matches nftablesDefaultPodIPsWithInterNetworkServiceAccessV{4,6}Set.
+	// Traffic will then be marked with a UDN specific value,
+	// which is used to direct the traffic to the appropriate network.
+	nftablesUDNMarkClusterIPsV4Map = "udn-mark-cluster-ips-v4-map"
+	nftablesUDNMarkClusterIPsV6Map = "udn-mark-cluster-ips-v6-map"
 )
 
 // configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
@@ -106,6 +126,12 @@ func configureUDNServicesNFTables() error {
 	tx.Flush(&knftables.Chain{Name: nftablesUDNServiceMarkChain})
 
 	tx.Add(&knftables.Chain{
+		Name:    nftablesDefaultToUDNClusterIPsServiceMarkChain,
+		Comment: knftables.PtrTo("Default to UDN services for packet marking"),
+	})
+	tx.Flush(&knftables.Chain{Name: nftablesDefaultToUDNClusterIPsServiceMarkChain})
+
+	tx.Add(&knftables.Chain{
 		Name:    nftablesUDNServicePreroutingChain,
 		Comment: knftables.PtrTo("UDN services packet mark - Prerouting"),
 
@@ -122,6 +148,13 @@ func configureUDNServicesNFTables() error {
 			"jump", nftablesUDNServiceMarkChain,
 		),
 	})
+	tx.Add(&knftables.Rule{
+		Chain: nftablesUDNServicePreroutingChain,
+		Rule: knftables.Concat(
+			"iifname", fmt.Sprintf("%q", types.K8sMgmtIntfName),
+			"jump", nftablesDefaultToUDNClusterIPsServiceMarkChain,
+		),
+	})
 
 	tx.Add(&knftables.Chain{
 		Name:    nftablesUDNServiceOutputChain,
@@ -132,6 +165,7 @@ func configureUDNServicesNFTables() error {
 		Priority: knftables.PtrTo(knftables.ManglePriority),
 	})
 	tx.Flush(&knftables.Chain{Name: nftablesUDNServiceOutputChain})
+
 	tx.Add(&knftables.Rule{
 		Chain: nftablesUDNServiceOutputChain,
 		Rule: knftables.Concat(
@@ -155,6 +189,28 @@ func configureUDNServicesNFTables() error {
 		Type:    "ipv6_addr . inet_proto . inet_service : verdict",
 	})
 
+	tx.Add(&knftables.Set{
+		Name:    nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set,
+		Comment: knftables.PtrTo("Default to UDN service cluster IP (IPv4)"),
+		Type:    "ipv4_addr",
+	})
+	tx.Add(&knftables.Set{
+		Name:    nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set,
+		Comment: knftables.PtrTo("Default to UDN service cluster IP (IPv6)"),
+		Type:    "ipv6_addr",
+	})
+
+	tx.Add(&knftables.Map{
+		Name:    nftablesUDNMarkClusterIPsV4Map,
+		Comment: knftables.PtrTo("UDN services Cluster IPs mark (IPv4)"),
+		Type:    "ipv4_addr . inet_proto . inet_service : verdict",
+	})
+	tx.Add(&knftables.Map{
+		Name:    nftablesUDNMarkClusterIPsV6Map,
+		Comment: knftables.PtrTo("UDN services Cluster IPs mark (IPv6)"),
+		Type:    "ipv6_addr . inet_proto . inet_service : verdict",
+	})
+
 	tx.Add(&knftables.Rule{
 		Chain: nftablesUDNServiceMarkChain,
 		Rule: knftables.Concat(
@@ -171,6 +227,22 @@ func configureUDNServicesNFTables() error {
 		Chain: nftablesUDNServiceMarkChain,
 		Rule: knftables.Concat(
 			"ip6 daddr . meta l4proto . th dport vmap", "@", nftablesUDNMarkExternalIPsV6Map,
+		),
+	})
+
+	tx.Add(&knftables.Rule{
+		Chain: nftablesDefaultToUDNClusterIPsServiceMarkChain,
+		Rule: knftables.Concat(
+			"ip saddr", "@", nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set,
+			"ip daddr . meta l4proto . th dport vmap", "@", nftablesUDNMarkClusterIPsV4Map,
+		),
+	})
+
+	tx.Add(&knftables.Rule{
+		Chain: nftablesDefaultToUDNClusterIPsServiceMarkChain,
+		Rule: knftables.Concat(
+			"ip6 saddr", "@", nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set,
+			"ip6 daddr . meta l4proto . th dport vmap", "@", nftablesUDNMarkClusterIPsV6Map,
 		),
 	})
 
@@ -984,14 +1056,13 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	var keepIPTRules []nodeipt.Rule
 	var keepNFTSetElems, keepNFTMapElems []*knftables.Element
 	for _, serviceInterface := range services {
-		name := ktypes.NamespacedName{Namespace: serviceInterface.(*kapi.Service).Namespace, Name: serviceInterface.(*kapi.Service).Name}
-
 		service, ok := serviceInterface.(*kapi.Service)
 		if !ok {
-			klog.Errorf("Spurious object in syncServices: %v",
-				serviceInterface)
+			klog.Errorf("Spurious object in syncServices: %v", serviceInterface)
 			continue
 		}
+		name := ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+
 		// don't process headless service
 		if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
 			continue
@@ -1059,7 +1130,12 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 			}
 		}
 		if util.IsNetworkSegmentationSupportEnabled() {
-			for _, nftMap := range []string{nftablesUDNMarkNodePortsMap, nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map} {
+			tablesToRecreate := []string{nftablesUDNMarkNodePortsMap, nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map}
+			if config.Default.NamespacesForInterNetworkServiceAccess != nil {
+				tablesToRecreate = append(tablesToRecreate, nftablesUDNMarkClusterIPsV4Map, nftablesUDNMarkClusterIPsV6Map)
+			}
+
+			for _, nftMap := range tablesToRecreate {
 				if err = recreateNFTMap(nftMap, keepNFTMapElems); err != nil {
 					errors = append(errors, err)
 				}

@@ -12,6 +12,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -107,6 +108,33 @@ func getUDNExternalIPsMarkNFTRules(svcPort kapi.ServicePort, externalIPs []strin
 	return nftRules
 }
 
+// getUDNClusterIPsMarkNFTRules returns a verdict map elements (nftablesUDNMarkClusterIPsV4Map or nftablesUDNMarkClusterIPsV6Map)
+// with a key composed of the external IP, svcPort protocol and port.
+// The value is a jump to the UDN chain mark if netInfo is provided,  or nil that is useful for map entry removal.
+func getUDNClusterIPsMarkNFTRules(svcPort kapi.ServicePort, clusterIPs []string, netInfo *bridgeUDNConfiguration) []*knftables.Element {
+	var nftRules []*knftables.Element
+	var val []string
+
+	if netInfo != nil {
+		val = []string{fmt.Sprintf("jump %s", GetUDNMarkChain(netInfo.pktMark))}
+	}
+	for _, clusterIP := range clusterIPs {
+		mapName := nftablesUDNMarkClusterIPsV4Map
+		if utilnet.IsIPv6String(clusterIP) {
+			mapName = nftablesUDNMarkClusterIPsV6Map
+		}
+		nftRules = append(nftRules,
+			&knftables.Element{
+				Map:   mapName,
+				Key:   []string{clusterIP, strings.ToLower(string(svcPort.Protocol)), fmt.Sprintf("%v", svcPort.Port)},
+				Value: val,
+			},
+		)
+
+	}
+	return nftRules
+}
+
 func recreateNFTSet(setName string, keepNFTElems []*knftables.Element) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
@@ -170,7 +198,12 @@ func getUDNNFTRules(service *kapi.Service, netConfig *bridgeUDNConfiguration) []
 		if util.ServiceTypeHasNodePort(service) {
 			rules = append(rules, getUDNNodePortMarkNFTRule(svcPort, netConfig))
 		}
+
 		rules = append(rules, getUDNExternalIPsMarkNFTRules(svcPort, util.GetExternalAndLBIPs(service), netConfig)...)
+
+		if config.Default.NamespacesForInterNetworkServiceAccess != nil {
+			rules = append(rules, getUDNClusterIPsMarkNFTRules(svcPort, service.Spec.ClusterIPs, netConfig)...)
+		}
 	}
 	return rules
 }
