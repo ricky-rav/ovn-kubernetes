@@ -1,17 +1,20 @@
 package node
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
-	coreinformers "k8s.io/client-go/informers/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -19,9 +22,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	nad "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/network-attach-def-controller"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -33,24 +34,30 @@ type UDNInterNetworkServiceAccessController struct {
 	ipv4, ipv6    bool
 	podController controller.Controller
 	podLister     corelisters.PodLister
-	nadController *nad.NetAttachDefinitionController
 
-	udnPodIPsv4 *nftPodElementsSetForInterNetwork
-	udnPodIPsv6 *nftPodElementsSetForInterNetwork
+	localCNIPodIPsv4 *nftPodElementsSet
+	localCNIPodIPsv6 *nftPodElementsSet
+
+	localHostNetworkedPodCGroups *nftPodElementsSet
 }
 
-func NewUDNInterNetworkServiceAccessController(
-	podInformer coreinformers.PodInformer,
-	nadController *nad.NetAttachDefinitionController) *UDNInterNetworkServiceAccessController {
+func NewUDNInterNetworkServiceAccessController(ipv4, ipv6 bool,
+	podInformer cache.SharedIndexInformer, // coreinformers.PodInformer, // TODO you can pass the local pod informer actually: traffic will hit nftables on the same node where it got originated
+) *UDNInterNetworkServiceAccessController {
 
+	podLister := corev1listers.NewPodLister(podInformer.GetIndexer()) // using LOCAL pod informer
 	m := &UDNInterNetworkServiceAccessController{
-		podLister:     podInformer.Lister(),
-		nadController: nadController,
+		podLister:                    podLister,
+		ipv4:                         ipv4,
+		ipv6:                         ipv6,
+		localCNIPodIPsv4:             newNFTPodElementsSet(nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set, false),
+		localCNIPodIPsv6:             newNFTPodElementsSet(nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set, false),
+		localHostNetworkedPodCGroups: newNFTPodElementsSet(nftablesDefaultPodCGroupsWithInterNetworkServiceAccessSet, false),
 	}
 	controllerConfig := &controller.ControllerConfig[v1.Pod]{
 		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
-		Informer:       podInformer.Informer(),
-		Lister:         podInformer.Lister().List,
+		Informer:       podInformer, //.Informer(),
+		Lister:         podLister.List,
 		ObjNeedsUpdate: podNeedsUpdateForInterNetworkServiceAccess,
 		Reconcile:      m.reconcilePod,
 		Threadiness:    1,
@@ -68,7 +75,11 @@ func (m *UDNInterNetworkServiceAccessController) Start(ctx context.Context) erro
 
 	m.nft = nft
 
-	// TODO create vmap if it doesn't exist
+	if err = m.setupNFTablesObjects(); err != nil {
+		return fmt.Errorf("failed to setup nftables objects for UDN inter-network service access: %w", err)
+	}
+
+	// TODO Make sure this is run /after/ the chains are added from gateway_nft...
 	// TODO ONly start this once we have the vmap and chain1 (chain-to-udn)
 	return controller.StartWithInitialSync(m.podInitialSync, m.podController)
 }
@@ -84,47 +95,45 @@ func CleanupUDNInterNetworkServiceAccess() error {
 		return fmt.Errorf("failed getting nftables helper: %w", err)
 	}
 	tx := nft.NewTransaction()
-	safeDelete(tx, &knftables.Chain{
-		Name: UDNIsolationChain,
-	})
 	safeDelete(tx, &knftables.Set{
-		Name: nftablesUDNPodIPsv4,
+		Name: nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set,
 		Type: "ipv4_addr",
 	})
 	safeDelete(tx, &knftables.Set{
-		Name: nftablesUDNPodIPsv6,
+		Name: nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set,
 		Type: "ipv6_addr",
 	})
+
+	// add set for cgroups
+	safeDelete(tx, &knftables.Set{
+		Name: nftablesDefaultPodCGroupsWithInterNetworkServiceAccessSet,
+		Type: "cgroup",
+	})
+
+	// nftablesDefaultPodCGroupsWithInterNetworkServiceAccessSet
 	return nft.Run(context.TODO(), tx)
 }
 
-func (m *UDNInterNetworkServiceAccessController) setupUDNIsolationFromHost() error {
+// TODO called from Start(), it creates chains and sets
+func (m *UDNInterNetworkServiceAccessController) setupNFTablesObjects() error {
 	tx := m.nft.NewTransaction()
-	tx.Add(&knftables.Chain{
-		Name:     UDNIsolationChain,
-		Comment:  knftables.PtrTo("Host isolation for user defined networks"),
-		Type:     knftables.PtrTo(knftables.FilterType),
-		Hook:     knftables.PtrTo(knftables.OutputHook),
-		Priority: knftables.PtrTo(knftables.FilterPriority),
-	})
-	tx.Flush(&knftables.Chain{
-		Name: UDNIsolationChain,
-	})
+	// TODO warning: you're alreadying add these in gateway_shared_intf.go
 	tx.Add(&knftables.Set{
-		Name:    nftablesUDNPodIPsv4,
-		Comment: knftables.PtrTo("default network IPs of pods in user defined networks (IPv4)"),
+		Name:    nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set,
+		Comment: knftables.PtrTo("Default to UDN service cluster IP (IPv4)"),
 		Type:    "ipv4_addr",
 	})
 	tx.Add(&knftables.Set{
-		Name:    nftablesUDNPodIPsv6,
-		Comment: knftables.PtrTo("default network IPs of pods in user defined networks (IPv6)"),
+		Name:    nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set,
+		Comment: knftables.PtrTo("Default to UDN service cluster IP (IPv6)"),
 		Type:    "ipv6_addr",
 	})
-	m.addRules(tx)
+
+	// m.addRules(tx)
 
 	err := m.nft.Run(context.TODO(), tx)
 	if err != nil {
-		return fmt.Errorf("could not setup nftables rules for UDN from host isolation: %v", err)
+		return fmt.Errorf("could not setup nftables rules for UDN from inter network service access: %v", err)
 	}
 	return nil
 }
@@ -149,7 +158,7 @@ func (m *UDNInterNetworkServiceAccessController) addRules(tx *knftables.Transact
 
 // TODO for individual pod lookup, just use util.HasNamespaceAccessToUDNServices
 
-func (m *UDNInterNetworkServiceAccessController) getPodsInSelectedNamespaces() ([]*v1.Pod, error) {
+func (m *UDNInterNetworkServiceAccessController) getAllPodsInSelectedNamespaces() ([]*v1.Pod, error) {
 	var pods []*v1.Pod
 	for _, namespace := range config.Default.NamespacesForInterNetworkServiceAccess {
 		podsInNamespace, err := m.podLister.Pods(namespace).List(labels.Everything())
@@ -162,35 +171,55 @@ func (m *UDNInterNetworkServiceAccessController) getPodsInSelectedNamespaces() (
 }
 
 func (m *UDNInterNetworkServiceAccessController) podInitialSync() error {
-	udnPodIPsv4 := map[string]sets.Set[string]{}
-	udnPodIPsv6 := map[string]sets.Set[string]{}
+	cniPodIPsv4 := map[string]sets.Set[string]{}
+	cniPodIPsv6 := map[string]sets.Set[string]{}
 
-	pods, err := m.getPodsInSelectedNamespaces()
+	hostNetworkedPodCGroups := map[string]sets.Set[string]{}
+
+	pods, err := m.getAllPodsInSelectedNamespaces()
 
 	for _, pod := range pods {
 		podKey, err := cache.MetaNamespaceKeyFunc(pod)
 		if err != nil {
-			klog.Warningf("UDNInterNetworkServiceAccessController failed to get key for pod %s in namespace %s: %v", pod.Name, pod.Namespace, err)
+			klog.Warningf("UDNInterNetworkServiceAccessController failed to get key for pod %s: %v", podKey, err)
 			continue
 		}
-		// ignore openPorts parse error in initial sync
-		pi, err := m.getPodInfo(podKey, pod)
-		if err != nil {
-			return err
-		}
-		if pi == nil {
-			// this pod doesn't need to be updated
-			continue
-		}
+		if util.PodWantsHostNetwork(pod) {
+			// TODO
+			// retrieve cgroup of the pod
+			// cgroup = ...
+			// hostNetworkedPodCGroups[podKey] = cgroup
+			cgroup, err := getPodCgroupV2(pod)
+			if err != nil {
+				return err
+			}
+			hostNetworkedPodCGroups[podKey] = sets.New(cgroup)
+		} else {
+			// pod is on the CNI network
+			// retrieve pod IPs
+			pi, err := m.getPodIPs(podKey, pod)
+			if err != nil {
+				return err
+			}
+			if pi == nil {
+				// this pod doesn't need to be updated
+				continue
+			}
 
-		udnPodIPsv4[podKey] = pi.ipsv4
-		udnPodIPsv6[podKey] = pi.ipsv6
+			cniPodIPsv4[podKey] = pi.ipv4
+			cniPodIPsv6[podKey] = pi.ipv6
+
+		}
 
 	}
-	if err = m.udnPodIPsv4.fullSync(m.nft, udnPodIPsv4); err != nil {
+	if err = m.localCNIPodIPsv4.fullSync(m.nft, cniPodIPsv4); err != nil {
 		return err
 	}
-	if err = m.udnPodIPsv6.fullSync(m.nft, udnPodIPsv6); err != nil {
+	if err = m.localCNIPodIPsv6.fullSync(m.nft, cniPodIPsv6); err != nil {
+		return err
+	}
+
+	if err = m.localHostNetworkedPodCGroups.fullSync(m.nft, hostNetworkedPodCGroups); err != nil {
 		return err
 	}
 
@@ -202,8 +231,7 @@ func podNeedsUpdateForInterNetworkServiceAccess(oldObj, newObj *v1.Pod) bool {
 		return true
 	}
 	// react to pod IP changes
-	return !reflect.DeepEqual(oldObj.Status, newObj.Status) ||
-		oldObj.Annotations[util.OvnPodAnnotationName] != newObj.Annotations[util.OvnPodAnnotationName]
+	return !reflect.DeepEqual(oldObj.Status.PodIPs, newObj.Status.PodIPs)
 }
 
 func (m *UDNInterNetworkServiceAccessController) reconcilePod(key string) error {
@@ -220,61 +248,115 @@ func (m *UDNInterNetworkServiceAccessController) reconcilePod(key string) error 
 		}
 		return fmt.Errorf("failed to fetch pod %s in namespace %s", name, namespace)
 	}
-	pi, err := m.getPodInfo(key, pod)
+
+	isInDefaultNetwork, err := isPodInDefaultClusterNetwork(pod)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check if pod %s is in default network: %w", key, err)
+	}
+	if !isInDefaultNetwork {
+		return nil
+	}
+
+	pi := &podInfoForInterNetwork{}
+	if pod.Spec.HostNetwork {
+		// TODO
+	} else {
+		if pi, err = m.getPodIPs(key, pod); err != nil {
+			return err
+		}
 	}
 	if pi == nil {
 		// this pod doesn't need to be updated
 		return nil
 	}
+
 	return m.updateWithPodInfo(key, pi)
 
 }
 
+// TODO this type is used to hold multipe information about the same pod in udn_isolation.go
+// You actually need hold pod IPs for cni pods and a group for host networked pods.
+// This type might be unnecessary.
 type podInfoForInterNetwork struct {
-	ipsv4       sets.Set[string]
-	ipsv6       sets.Set[string]
-	icmpv4      sets.Set[string]
-	icmpv6      sets.Set[string]
-	openPortsv4 sets.Set[string]
-	openPortsv6 sets.Set[string]
+	ipv4   sets.Set[string] //ipv4 // TODO QUESTION: why was it a set? There can only be one, no? I think it's because she uses ports, but for default pod ips  there can only be one per ip family
+	ipv6   sets.Set[string] //string
+	cgroup sets.Set[string] //string
 }
 
-// getPodInfo returns nftables set elements for a pod.
+// getPodIPs returns nftables set elements for an ovnk-networked pod in the default network.
 // nil is returned when pod should not be updated.
 // empty podInfoForInterNetwork will delete the pod from all sets and is returned when nil pod is passed.
 // first error is for parsing openPorts annotation, second error is for fetching pod IPs.
 // parsing error should not stop the update, as we need to cleanup potentially present rules from the previous config.
-func (m *UDNInterNetworkServiceAccessController) getPodInfo(podKey string, pod *v1.Pod) (*podInfoForInterNetwork, error) {
+func (m *UDNInterNetworkServiceAccessController) getPodIPs(podKey string, pod *v1.Pod) (*podInfoForInterNetwork, error) {
+	// TODO maybe get IPs + cgroup here? if not hostnetworked get ips, otherwise get cgroup?
 	pi := &podInfoForInterNetwork{}
 	if pod == nil {
 		return pi, nil
 	}
-	// only add pods with primary UDN
-	primaryUDN, err := m.isPodPrimaryUDN(pod)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check if pod %s is in primary UDN: %w", podKey, err)
-	}
-	if !primaryUDN {
-		return nil, nil
-	}
+
 	podIPs, err := util.DefaultNetworkPodIPs(pod)
 	if err != nil {
 		// update event should come later with ips
 		klog.V(5).Infof("Failed to get default network pod IPs for pod %s: %v", podKey, err)
 		return nil, nil
 	}
-	pi.ipsv4, pi.ipsv6 = splitIPsPerFamily(podIPs)
+	pi.ipv4, pi.ipv6 = splitIPsPerFamily(podIPs)
 	return pi, nil
+}
+
+func getPodCgroupV2(pod *v1.Pod) (string, error) {
+	// Get any container ID
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return "", fmt.Errorf("no containers in pod")
+	}
+
+	containerID := pod.Status.ContainerStatuses[0].ContainerID
+
+	containerPID, err := getContainerPID(containerID)
+	if err != nil {
+		return "", err
+	}
+
+	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", containerPID)
+	content, err := os.ReadFile(cgroupFile)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse the cgroup file
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		// For cgroup v2, we'll see a single line with "0::/path"
+		if strings.HasPrefix(line, "0::") {
+			return strings.TrimPrefix(line, "0::"), nil
+		}
+	}
+
+	return "", fmt.Errorf("cgroup not found")
+}
+
+// TODO
+// How do you implement this in go?
+func getContainerPID(containerID string) (int, error) {
+	// This implementation depends on your container runtime
+	// You might need to use the runtime's API to get the PID
+	// For example, with containerd:
+	// Use containerd client to get container PID
+	// crictl inspect $CONTAINER_ID | jq .info.pid
+	return 0, fmt.Errorf("not implemented")
 }
 
 // updateWithPodInfo updates the nftables sets with given podInfoForInterNetwork for a given pod.
 // empty podInfoForInterNetwork will delete the pod from all sets.
+// TODO update also for localhost
+// TODO problem: upon delete, how can you tell whether it was a cni pod or a host networked pod?
+// maybe delete in all sets?
 func (m *UDNInterNetworkServiceAccessController) updateWithPodInfo(podKey string, pi *podInfoForInterNetwork) error {
 	tx := m.nft.NewTransaction()
-	m.udnPodIPsv4.updatePodElementsTX(podKey, pi.ipsv4, tx)
-	m.udnPodIPsv6.updatePodElementsTX(podKey, pi.ipsv6, tx)
+	m.localCNIPodIPsv4.updatePodElementsTX(podKey, pi.ipv4, tx)
+	m.localCNIPodIPsv6.updatePodElementsTX(podKey, pi.ipv6, tx)
 
 	if tx.NumOperations() == 0 {
 		return nil
@@ -286,150 +368,7 @@ func (m *UDNInterNetworkServiceAccessController) updateWithPodInfo(podKey string
 	}
 
 	// update internal state only after successful transaction
-	m.udnPodIPsv4.updatePodElementsAfterTX(podKey, pi.ipsv4)
-	m.udnPodIPsv6.updatePodElementsAfterTX(podKey, pi.ipsv6)
-	return nil
-}
-
-func (m *UDNInterNetworkServiceAccessController) isPodPrimaryUDN(pod *v1.Pod) (bool, error) {
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
-	if err != nil {
-		// pod IPs were not assigned yet, should be retried later
-		return false, err
-	}
-	// NetworkRoleInfrastructure means default network is not primary, then UDN must be the primary network
-	return podAnnotation.Role == types.NetworkRoleInfrastructure, nil
-}
-
-func (m *UDNInterNetworkServiceAccessController) getOpenPortSets(newV4IPs, newV6IPs sets.Set[string], openPorts []*util.OpenPort) (icmpv4, icmpv6, openPortsv4, openPortsv6 sets.Set[string]) {
-	icmpv4 = sets.New[string]()
-	icmpv6 = sets.New[string]()
-	openPortsv4 = sets.New[string]()
-	openPortsv6 = sets.New[string]()
-
-	for _, openPort := range openPorts {
-		if openPort.Protocol == "icmp" {
-			icmpv4 = newV4IPs
-			icmpv6 = newV6IPs
-		} else {
-			for podIPv4 := range newV4IPs {
-				openPortsv4.Insert(joinNFTSlice([]string{podIPv4, openPort.Protocol, fmt.Sprintf("%d", *openPort.Port)}))
-			}
-			for podIPv6 := range newV6IPs {
-				openPortsv6.Insert(joinNFTSlice([]string{podIPv6, openPort.Protocol, fmt.Sprintf("%d", *openPort.Port)}))
-			}
-		}
-	}
-	return
-}
-
-// nftPodElementsSetForInterNetwork is a helper struct to manage an nftables set with pod-owned elements.
-// Can be used to store pod IPs, or more complex elements.
-type nftPodElementsSetForInterNetwork struct {
-	setName string
-	// podName: set elements
-	podElements map[string]sets.Set[string]
-	// podIPs may be reused as soon as the pod reaches Terminating state, and delete event may come later.
-	// That means a new pod with the same IP may be added before the previous pod is deleted.
-	// To avoid deleting newly-added pod IP thinking we are deleting old pod IP, we keep track of re-used set elements.
-	elementToPods map[string]sets.Set[string]
-	// if a set element is composed of multiple strings
-	// set to false to avoid unneeded parsing
-	composedValue bool
-}
-
-func newNFTPodElementsSetForInterNetwork(setName string, composedValue bool) *nftPodElementsSetForInterNetwork {
-	return &nftPodElementsSetForInterNetwork{
-		setName:       setName,
-		composedValue: composedValue,
-		podElements:   make(map[string]sets.Set[string]),
-		elementToPods: make(map[string]sets.Set[string]),
-	}
-}
-
-func (n *nftPodElementsSetForInterNetwork) getKey(key string) []string {
-	if n.composedValue {
-		return splitNFTSlice(key)
-	}
-	return []string{key}
-}
-
-// updatePodElementsTX adds transaction operations to update pod elements in nftables set.
-// To update internal struct, updatePodElementsAfterTX must be called if transaction is successful.
-func (n *nftPodElementsSetForInterNetwork) updatePodElementsTX(namespacedName string, podElements sets.Set[string], tx *knftables.Transaction) {
-	if n.podElements[namespacedName].Equal(podElements) {
-		return
-	}
-	// always delete all old elements, then add new elements.
-	for existingElem := range n.podElements[namespacedName] {
-		if n.elementToPods[existingElem].Len() == 1 {
-			// only delete element is it referenced by one pod
-			tx.Delete(&knftables.Element{
-				Set: n.setName,
-				Key: n.getKey(existingElem),
-			})
-		}
-	}
-	for newElem := range podElements {
-		// adding existing element is a no-op
-		tx.Add(&knftables.Element{
-			Set: n.setName,
-			Key: n.getKey(newElem),
-		})
-	}
-}
-
-func (n *nftPodElementsSetForInterNetwork) updatePodElementsAfterTX(namespacedName string, elements sets.Set[string]) {
-	for existingElem := range n.podElements[namespacedName] {
-		if !elements.Has(existingElem) {
-			// element was removed
-			n.elementToPods[existingElem].Delete(namespacedName)
-			if n.elementToPods[existingElem].Len() == 0 {
-				delete(n.elementToPods, existingElem)
-			}
-		}
-	}
-
-	for elem := range elements {
-		if n.elementToPods[elem] == nil {
-			n.elementToPods[elem] = sets.New[string]()
-		}
-		n.elementToPods[elem].Insert(namespacedName)
-	}
-	if len(elements) == 0 {
-		delete(n.podElements, namespacedName)
-	} else {
-		n.podElements[namespacedName] = elements
-	}
-}
-
-// fullSync should be called on restart to sync all pods elements.
-// It flushes existing elements, and adds new elements.
-func (n *nftPodElementsSetForInterNetwork) fullSync(nft knftables.Interface, podsElements map[string]sets.Set[string]) error {
-	tx := nft.NewTransaction()
-	tx.Flush(&knftables.Set{
-		Name: n.setName,
-	})
-	for podName, podElements := range podsElements {
-		if len(podElements) == 0 {
-			continue
-		}
-		for elem := range podElements {
-			tx.Add(&knftables.Element{
-				Set: n.setName,
-				Key: n.getKey(elem),
-			})
-			if n.elementToPods[elem] == nil {
-				n.elementToPods[elem] = sets.New[string]()
-			}
-			n.elementToPods[elem].Insert(podName)
-		}
-		n.podElements[podName] = podElements
-	}
-	err := nft.Run(context.TODO(), tx)
-	if err != nil {
-		clear(n.podElements)
-		return fmt.Errorf("initial pods sync for inter network service access failed: %w", err)
-	}
+	m.localCNIPodIPsv4.updatePodElementsAfterTX(podKey, pi.ipv4)
+	m.localCNIPodIPsv6.updatePodElementsAfterTX(podKey, pi.ipv6)
 	return nil
 }

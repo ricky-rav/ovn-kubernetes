@@ -457,7 +457,7 @@ func (m *UDNHostIsolationManager) getPodInfo(podKey string, pod *v1.Pod) (*podIn
 		return pi, nil, nil
 	}
 	// only add pods with primary UDN
-	primaryUDN, err := m.isPodPrimaryUDN(pod)
+	primaryUDN, err := isPodPrimaryUDN(pod)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to check if pod %s is in primary UDN: %w", podKey, err)
 	}
@@ -506,7 +506,7 @@ func (m *UDNHostIsolationManager) updateWithPodInfo(podKey string, pi *podInfo) 
 	return nil
 }
 
-func (m *UDNHostIsolationManager) isPodPrimaryUDN(pod *v1.Pod) (bool, error) {
+func isPodPrimaryUDN(pod *v1.Pod) (bool, error) {
 	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		// pod IPs were not assigned yet, should be retried later
@@ -514,6 +514,15 @@ func (m *UDNHostIsolationManager) isPodPrimaryUDN(pod *v1.Pod) (bool, error) {
 	}
 	// NetworkRoleInfrastructure means default network is not primary, then UDN must be the primary network
 	return podAnnotation.Role == types.NetworkRoleInfrastructure, nil
+}
+
+func isPodInDefaultClusterNetwork(pod *v1.Pod) (bool, error) {
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		// pod IPs were not assigned yet, should be retried later
+		return false, err
+	}
+	return podAnnotation.Role == types.NetworkRolePrimary, nil
 }
 
 func (m *UDNHostIsolationManager) getOpenPortSets(newV4IPs, newV6IPs sets.Set[string], openPorts []*util.OpenPort) (icmpv4, icmpv6, openPortsv4, openPortsv6 sets.Set[string]) {

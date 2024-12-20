@@ -100,6 +100,8 @@ const (
 	nftablesDefaultPodIPsWithInterNetworkServiceAccessV4Set = "default-pod-ips-with-inter-network-service-access-v4-set"
 	nftablesDefaultPodIPsWithInterNetworkServiceAccessV6Set = "default-pod-ips-with-inter-network-service-access-v6-set"
 
+	nftablesDefaultPodCGroupsWithInterNetworkServiceAccessSet = "default-pod-cgroups-with-inter-network-service-access-set"
+
 	// nftablesUDNMarkClusterIPsV4Map is a verdict map containing
 	// clusterIP / protocol / port keys matching against traffic that
 	// is destined to services in UDNs. This will only be applied to traffic whose source
@@ -1099,7 +1101,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		if !npw.dpuMode {
 			localEndpointsArray := sets.List(localEndpoints)
 			keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, localEndpointsArray, hasLocalHostNetworkEp)...)
-			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpointsArray, hasLocalHostNetworkEp)...)
+			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpointsArray, hasLocalHostNetworkEp)...) // for nodeport, LB and external ip services
 			if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 				netConfig := npw.ofm.getActiveNetwork(netInfo)
 				if netConfig == nil {
@@ -2352,6 +2354,7 @@ func newGateway(nodeName string, subnets []*net.IPNet, gwNextHops []net.IP, gwIn
 		}
 
 		if config.Gateway.NodeportEnable {
+			// TODO is it a problem if the whole thing is enabled only if nodeportenable is true?
 			if config.OvnKubeNode.Mode == types.NodeModeFull {
 				// (TODO): Internal Traffic Policy is not supported in DPU mode
 				if err := initSvcViaMgmPortRoutingRules(subnets); err != nil {
@@ -2359,10 +2362,12 @@ func newGateway(nodeName string, subnets []*net.IPNet, gwNextHops []net.IP, gwIn
 				}
 			}
 			klog.Info("Creating Gateway Node Port Watcher")
+			// TODO careful: also patryk's feature on external ip and nodeports is enabled ONLY if nodeportenable is true
 			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, nadController)
 			if err != nil {
 				return err
 			}
+
 		} else {
 			// no service OpenFlows, request to sync flows now.
 			gw.openflowManager.requestFlowSync()

@@ -123,6 +123,8 @@ type DefaultNodeNetworkController struct {
 	gatewaySetup *preStartSetup
 
 	udnHostIsolationManager *UDNHostIsolationManager
+
+	interNetworkServiceAccessController *UDNInterNetworkServiceAccessController
 }
 
 type preStartSetup struct {
@@ -144,9 +146,19 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		},
 		routeManager: routeManager,
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && !config.OVNKubernetesFeature.DisableUDNHostIsolation {
-		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
-			cnnci.watchFactory.PodCoreInformer(), nadController)
+	if util.IsNetworkSegmentationSupportEnabled() {
+		if !config.OVNKubernetesFeature.DisableUDNHostIsolation {
+			c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
+				cnnci.watchFactory.PodCoreInformer(), nadController)
+		}
+
+		if config.Default.NamespacesForInterNetworkServiceAccess != nil {
+			// TODO launch my controller
+			// TODO careful with the ordering between nodeportwatcher and this
+			c.interNetworkServiceAccessController = NewUDNInterNetworkServiceAccessController(
+				config.IPv4Mode, config.IPv6Mode,
+				cnnci.watchFactory.LocalPodInformer())
+		}
 	}
 	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, c.updateGatewayMAC)
 	return c
