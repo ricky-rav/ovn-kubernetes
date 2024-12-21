@@ -51,7 +51,7 @@ OVN_VER=${OVN_VER#-} &&\
 OVS_VER=${OVS_VER#-} &&\
 INSTALL_PKGS=" \
         bind-utils procps-ng openssl numactl-libs \
-        libpcap iproute iputils strace socat unbound-libs python2 nmap\
+        libpcap iproute iputils strace socat unbound-libs python2 nmap nftables\
         " && \
         yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
     yum -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False update && \
