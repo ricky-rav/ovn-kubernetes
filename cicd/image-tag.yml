@@ -1,0 +1,6 @@
+#
+
+variables:
+  prev_builder_image: ${CI_REGISTRY}/sdn/sdn-cicd-tools/builder:0
+  builder_image_tag: 4
+  builder_image: ${CI_REGISTRY}/sdn/sdn-cicd-tools/builder:${builder_image_tag}

@@ -1,4 +1,19 @@
+#
+# Dual-pipeline
+#
+
 include:
   - project: 'sdn/sdn-cicd'
     file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
     ref: 'master'
+
+cicd-2-0:
+  stage: Build
+  rules:
+    - if: '$RUN_CICD_2_0 == "true" && $CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs: []
+  allow_failure: true
+  trigger:
+    strategy: depend
+    include:
+      - cicd/cicd-2-0.yml

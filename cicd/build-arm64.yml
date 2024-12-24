@@ -1,0 +1,28 @@
+
+stages:
+  - build
+  - image
+
+include:
+  - cicd/runners-tags.yml
+  - cicd/build-common.yml
+  
+build:arm64:
+  stage: build
+  image: ${image}
+  extends:
+    - .tags-arm64
+    - .ovn-k8s-build-ovn
+    - .always
+
+image:arm64:
+  image: ${builder_image}
+  stage: image
+  extends:
+    - .tags-arm64
+    - .ovn-k8s-build-image
+    - .always
+
+
+
+

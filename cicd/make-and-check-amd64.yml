@@ -1,0 +1,40 @@
+
+stages:
+  - make-and-check
+
+include:
+  - cicd/runners-tags.yml
+
+.always:
+  rules:
+    - when: always
+
+make-build:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make build -C go-controller
+
+make-windows:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make windows -C go-controller
+
+make-gofmt:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make gofmt -C go-controller
+
+
+

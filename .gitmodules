@@ -1,0 +1,3 @@
+[submodule "cicd/tools"]
+	path = cicd/tools
+	url = ../sdn-cicd-tools

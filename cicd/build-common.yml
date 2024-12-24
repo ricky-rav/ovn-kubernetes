@@ -1,0 +1,36 @@
+# All artifiacts that were built by
+# make bld -C dist/images:
+
+.always:
+  rules:
+    - when: always
+
+.ovn-k8s-build-ovn:
+  script:
+    - make bld -C dist/images
+  artifacts:
+    paths:
+      - dist/images/git_info
+      - dist/images/hybrid-overlay-node
+      - dist/images/ovndbchecker
+      - dist/images/ovn-k8s-cni-overlay
+      - dist/images/ovnkube-identity
+      - dist/images/ovn-kube-util
+      - dist/images/ovnkube
+      - dist/images/ovnkube-trace
+
+.ovn-k8s-build-image:
+  script:
+    - yum install -y docker make
+    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
+    - |
+      make -C cicd/build-image \
+           -f build-and-push.mk \
+           k8s-version=${k8s_version} \
+           ovn-version=${ovn_version} \
+           ovs-version=${ovs_version} \
+           platform=${platform} \
+           dist=${dist} \
+           image-tag=${image_tag} \
+           artifactory-creds=${JFROG_CREDENTIAL} \
+           registry-tag-path=${container_registry_tag_path}

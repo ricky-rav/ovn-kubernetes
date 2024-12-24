@@ -1,0 +1,22 @@
+#
+# This is just bridging pipeline between
+# ovn-kubernetes pipelines and sdn/sdn-cicd pipeline.
+# Purpose of it is variables isolation (see details in .gitlab-ci.yml)
+#
+stages:
+  - downstream
+
+.always:
+  rules:
+    - when: always
+
+trigger-gitops-run:
+  stage: downstream
+  extends:
+    - .always
+  trigger:
+    project: sdn/gitops
+    branch: $sdn_gitops_branch
+    strategy: depend
+    forward:
+      yaml_variables: true
