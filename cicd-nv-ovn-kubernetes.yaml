@@ -35,6 +35,8 @@ test:
     MR: 0
 
 cicd:
+  # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
+  skip_CICD_deploy_and_tests: false
   skip_make_check: false
   skip_SDN_tests: false
   SDN_LOCK_lock_on_failure: false
