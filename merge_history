@@ -1,6 +1,16 @@
 upgrade to upstream 701b8e077c6
 
-merge downstream cdfd27b4266f187a86386eb68b786e75e56d634f and upstream ffddd06ec1 then cd1f5d1d3
+merge downstream 4bdd8def and upstream ffddd06ec1 then cd1f5d1d3
+
+not merged
+
+1141b0d9f9 [SDN-3207] Fix vulnerabilities in x/net package
+da26a1535c [SDN-3189] Upgrade golang crypto package to fix vulnerabilities
+82e496fb94 e2e: Improve IGMP validation test with retries (cont.)
+bf3624d183 [SDN-3157] Fix vulnerabilities
+aa7f17b4f1 [SDN-3175] fix flaky VM live migration e2e case
+fa3e1f31c4 e2e: Improve IGMP validation test with retries
+
 
 perNADConf
 inter-connect
