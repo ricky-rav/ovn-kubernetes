@@ -34,10 +34,20 @@ test:
     commitID: HEAD
     MR: 0
 
+  cicd-tests:
+    # Set here which cicd test groups needs to run. Default: all tests
+    run-groups:
+      - all
+    exclude:
+      # Add tests to exclude here:
+      # Example:
+      # - connect-to
+
 cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
   skip_make_check: false
+  skip_flowTests: false
   skip_SDN_tests: false
   SDN_LOCK_lock_on_failure: false
 
