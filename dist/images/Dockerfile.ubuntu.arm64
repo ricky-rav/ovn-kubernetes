@@ -29,7 +29,14 @@ USER root
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
     iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap nftables
 
-RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.11/bin/linux/arm64/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
+# Note: to update kubernetes version you need to update kubectl.sha256.arm64 files:
+# $ export K8S_VER={new-version}
+# $ curl -L https://storage.googleapis.com/kubernetes-release/release/$K8S_VER/bin/linux/arm64/kubectl.sha256 > ./kubectl.sha256.arm64
+# See SDN-3261 for more details.
+COPY kubectl.sha256.arm64 /tmp/
+RUN curl -L https://storage.googleapis.com/kubernetes-release/release/v1.29.8/bin/linux/arm64/kubectl > /usr/bin/kubectl \
+   && echo `cat /tmp/kubectl.sha256.arm64` /usr/bin/kubectl | sha256sum -c - \
+   && chmod +x /usr/bin/kubectl
 
 # Install OVS and OVN packages.
 RUN \
