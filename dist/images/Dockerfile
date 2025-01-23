@@ -9,8 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE yes
 # Based on:OVS_VER=3.3.1.42916de4.17155400 OVN_VER=24.03.2.a1df3472.17155400
 
 ARG K8S_VER
-ARG OVS_VER
-ARG OVN_VER
+
+# TODO: Below we have code that removes '-' prefix if specified:
+# OVN_VER=${OVN_VER#-}
+# OVS_VER=${OVS_VER#-}
+# This code can be removed after CI/CD pipelines will be updated that adds this prefix
+ARG OVS_VER  # Example: 3.3.1.5f875996.19422428
+ARG OVN_VER  # Example: 24.03.2.e9db0dbb.21320785
 ARG ARCH
 
 ARG ARTIFACTORY_CERT
@@ -25,15 +30,17 @@ RUN  curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.11
 RUN echo -e "\
 [ovn-all-Artifactory] \n\
 name=ovn-all-Artifactory \n\
-baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/ovn-all/8/x86_64/ \n\
+baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovn/ovn-all/8/\$basearch/ \n\
 enabled=1 \n\
 gpgcheck=0" > /etc/yum.repos.d/ovn.repo &&\
 echo -e "\
 [ovs-all-Artifactory] \n\
 name=ovs-all-Artifactory \n\
-baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovs/ovs-all/8/x86_64/ \n\
+baseurl=https://$ARTIFACTORY_CERT@urm.nvidia.com/artifactory/sw-ngn-sdn-rpm/ovs/ovs-all/8/\$basearch/ \n\
 enabled=1 \n\
 gpgcheck=0" > /etc/yum.repos.d/ovs.repo &&\
+OVN_VER=${OVN_VER#-} &&\
+OVS_VER=${OVS_VER#-} &&\
 INSTALL_PKGS=" \
         bind-utils procps-ng openssl numactl-libs \
         libpcap iproute iputils strace socat unbound-libs python2 nmap\
@@ -41,7 +48,7 @@ INSTALL_PKGS=" \
         yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \
     yum -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False update && \
     yum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \
-        python3-openvswitch$OVS_VER-1.el8.noarch openvswitch$OVS_VER openvswitch-devel$OVS_VER ovn$OVN_VER ovn-host$OVN_VER ovn-central$OVN_VER && \
+        python3-openvswitch-$OVS_VER-1.el8.noarch openvswitch-$OVS_VER openvswitch-devel-$OVS_VER ovn-$OVN_VER ovn-host-$OVN_VER ovn-central-$OVN_VER && \
     yum autoremove -y && \
     yum clean all && rm -rf /var/cache/dnf/* && rm -f /etc/yum.repos.d/ovn.repo /etc/yum.repos.d/ovs.repo
 
