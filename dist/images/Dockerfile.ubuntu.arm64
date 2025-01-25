@@ -20,7 +20,7 @@ ARG DIST_CODE=focal
 USER root
 
 RUN apt-get update && apt-get install -y arping firewalld iproute2 curl \
-    iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap
+    iputils-ping software-properties-common util-linux apt-transport-https net-tools nmap nftables
 
 RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.11/bin/linux/arm64/kubectl && mv kubectl /usr/bin/kubectl && chmod +x /usr/bin/kubectl
 

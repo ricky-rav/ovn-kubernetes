@@ -1,6 +1,14 @@
 upgrade to upstream 701b8e077c6
 
-merge downstream 4bdd8def and upstream ffddd06ec1 then cd1f5d1d3
+merge downstream 4bdd8def and upstream ffddd06ec1 then cd1f5d1d3 then 033715e8
+
+below files deleted, check ./go-controller/pkg/networkmanager/api.go
+go-controller/pkg/network-attach-def-controller/network_attach_def_controller.go
+go-controller/pkg/network-attach-def-controller/network_manager.go
+
+go-controller/pkg/testing/nad/netattach.go
+
+EgressIPController  default init netInfo?
 
 not merged
 
@@ -23,4 +31,5 @@ note https://gitlab-master.nvidia.com/sdn/ovn-kubernetes/-/commit/5a15844217b146
 go-controller/pkg/ovn/hybrid.go
 
 git diff -u 701b8e077c6 ffddd06ec12e43af0397bca8e36
+
 
