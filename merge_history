@@ -19,16 +19,20 @@ bf3624d183 [SDN-3157] Fix vulnerabilities
 aa7f17b4f1 [SDN-3175] fix flaky VM live migration e2e case
 fa3e1f31c4 e2e: Improve IGMP validation test with retries
 
+b26dc9ee28 (yunz-gitlab/nv-1.2-merge-upstream.2, nv-1.2-merge-upstream.2) workaround to bring back the directly connected route of ovn-k8s-mp0
+c7e3e6ad33 skip make check and test
+eceee581ed temprory fix for lint
+052e22a8d5 add test-only managementPortConfig flag
+dab2009ebe fix needed for dpu/dpu-host setup
+130459d8ee Allow RawUDNAllowedDefaultServices and db-txn-timeout configurable
+b607065c3a fix ovs/ovn version
+6cf19c0659 add nft to ovnkube image
 
-perNADConf
-inter-connect
-ovn-primary support
 is already set/not set yet
 
 
 note https://gitlab-master.nvidia.com/sdn/ovn-kubernetes/-/commit/5a15844217b1466aa5cedb3ea7f40df2eaf6cbe7, change gateway.GetGatewayBridgeIface() to gateway.GetGatewayIface()
 
-go-controller/pkg/ovn/hybrid.go
 
 git diff -u 701b8e077c6 ffddd06ec12e43af0397bca8e36
 
