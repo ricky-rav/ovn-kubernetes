@@ -1,6 +1,6 @@
 upgrade to upstream 701b8e077c6
 
-merge downstream 4bdd8def and upstream ffddd06ec1 then cd1f5d1d3 then 033715e8 then f0723b30
+merge downstream b921daf1c5 and upstream ffddd06ec1 then cd1f5d1d3 then 033715e8 then f0723b30
 
 below files deleted, check ./go-controller/pkg/networkmanager/api.go
 go-controller/pkg/network-attach-def-controller/network_attach_def_controller.go
