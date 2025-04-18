@@ -2,15 +2,35 @@
 # New generation pipeline
 #
 
+spec:
+  inputs:
+    k8s_version:
+      description: Kubernetes version for kubectl (passed to dist/images/Dockerfile)
+      default: v1.29.8
+    ovn_version:
+      description: Version of OVN that is used to build containers
+    ovs_version:
+      description: Version of OVS that is used to build containers
+    run_check:
+      description: Run unit tests before building artifiacts
+      type: boolean
+      default: true
+    run_gitops:
+      description: Run downstream pipeline in gitos to check artifacts
+      type: boolean
+      default: true
+
+---
+
 variables:
-  k8s_version: v1.29.8
-  ovn_version: 24.03.2.cf6f5205.24240206
-  ovs_version: 3.3.1.5f875996.19422428
-  run_check: true
+  k8s_version: $[[ inputs.k8s_version ]]
+  ovn_version: $[[ inputs.ovn_version ]]
+  ovs_version: $[[ inputs.ovs_version ]]
+  run_check: $[[ inputs.run_check ]]
+  run_gitops: $[[ inputs.run_gitops ]]
   run_deploy_tests: false
   # Promote ovn_version above on success of pipeline
   promote_ovn_on_success: false
-  run_gitops: true
   source_project_name: $CI_PROJECT_NAME
   image_tag: $CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
   container_registry: nvcr.io
@@ -72,7 +92,7 @@ default:
     - .always
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
-    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${CI_JOB_TOKEN} -C cicd/containers
+    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} -C cicd/containers
     - image_current_tag=`cat cicd/containers/_registry/current-tag`
     - |
       cat > ./builder-image.yaml <<EOF

@@ -36,5 +36,14 @@ make-gofmt:amd64:
   script:
     - make gofmt -C go-controller
 
+make-check:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make check -C go-controller CGO_ENABLED=1
+
 
 

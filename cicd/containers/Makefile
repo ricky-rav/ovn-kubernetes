@@ -19,11 +19,12 @@ gitlab-project-path = $(if $(CI_PROJECT_PATH),$(CI_PROJECT_PATH),$(error CI_PROJ
 # Extract repositry ID from the project ID that related to $(image-name):
 gitlab-jq-extract-repo-id = '.[] | select(."name" == "$(image-name)") | .id'
 gitlab-api-path-repositories = $(gitlab-api-v4)/projects/$(gitlab-project-id)/registry/repositories
+$(info Registry repository request: $(shell curl --header "PRIVATE-TOKEN: $(gitlab-api-token)" $(gitlab-api-path-repositories)))
 maybe-gitlab-registry-id := $(shell curl --header "PRIVATE-TOKEN: $(gitlab-api-token)" $(gitlab-api-path-repositories) | jq -r $(gitlab-jq-extract-repo-id))
 
 # Check that only zero or one registry has name $(image-name)
 zero-or-one = $(if $1,$(if $(filter 1,$(words $1)),true),true)
-$(if $(call zero-or-one,$(maybe-gitlab-registry-id)),,$(error Ambiguous registry with name: $(image-name): $(mayabe-gitlab-registry-id)))
+$(if $(call zero-or-one,$(maybe-gitlab-registry-id)),,$(error Ambiguous registry with name: $(image-name): $(maybe-gitlab-registry-id)))
 
 $(info Project registry id for $(image-name): $(maybe-gitlab-registry-id))
 

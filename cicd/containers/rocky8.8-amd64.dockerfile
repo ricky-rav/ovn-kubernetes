@@ -13,7 +13,10 @@ RUN dnf -y install \
       pkgconfig \
       rpm-build \
       make \
-      git
+      git \
+      gcc \
+      sudo
+# gcc & sudo are needed for make check
 
 RUN curl -L https://go.dev/dl/go${go_version}.${go_platform}.tar.gz > /tmp/go.tar.gz \
    && echo ${go_sha256} /tmp/go.tar.gz | sha256sum -c - \
