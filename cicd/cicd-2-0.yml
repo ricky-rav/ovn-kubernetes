@@ -164,7 +164,7 @@ make-lint:
   extends:
     - .tags-amd64
     - .if-run-check
-  image: golangci/golangci-lint:v1.56.2
+  image: golangci/golangci-lint:v1.59
   needs: []
   script:
     - pushd go-controller && golangci-lint run --max-same-issues 0 --verbose --print-resources-usage --modules-download-mode=vendor --timeout=15m0s && popd
