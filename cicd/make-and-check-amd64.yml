@@ -42,8 +42,13 @@ make-check:amd64:
   extends:
     - .tags-amd64
     - .always
+  parallel: 11
   script:
-    - make check -C go-controller CGO_ENABLED=1
+    - pushd go-controller && go list -buildvcs=false -mod vendor -f '{{if len .TestGoFiles}} {{.Dir}} {{end}}' ./cmd/... ./pkg/... ./hybrid-overlay/... | sort > ../.all-packages.txt && popd
+    - split -d -n l/$CI_NODE_TOTAL ./.all-packages.txt pkgs_
+    - FILE_INDEX=$(printf "%02d" $((CI_NODE_INDEX - 1)))
+    - cat pkgs_${FILE_INDEX}
+    - make check -C go-controller CGO_ENABLED=1 PKGS="$(cat pkgs_${FILE_INDEX} | xargs)"
 
 
 
