@@ -5,6 +5,9 @@ stages:
 include:
   - cicd/runners-tags.yml
 
+default:
+  interruptible: true
+
 .always:
   rules:
     - when: always
@@ -40,15 +43,18 @@ make-check:amd64:
   stage: make-and-check
   image: ${image}
   extends:
-    - .tags-amd64
     - .always
   parallel: 11
+  timeout: 6 minutes
+  tags:
+    - sdn-cicd-16-runner
   script:
-    - pushd go-controller && go list -buildvcs=false -mod vendor -f '{{if len .TestGoFiles}} {{.Dir}} {{end}}' ./cmd/... ./pkg/... ./hybrid-overlay/... | sort > ../.all-packages.txt && popd
-    - split -d -n l/$CI_NODE_TOTAL ./.all-packages.txt pkgs_
-    - FILE_INDEX=$(printf "%02d" $((CI_NODE_INDEX - 1)))
-    - cat pkgs_${FILE_INDEX}
-    - make check -C go-controller CGO_ENABLED=1 PKGS="$(cat pkgs_${FILE_INDEX} | xargs)"
-
+    - mkdir _build
+    - make -C cicd/unit-tests build-dir=$(pwd)/_build controller-dir=$(pwd)/go-controller group-no=$CI_NODE_INDEX groups-total=$CI_NODE_TOTAL
+  artifacts:
+    paths:
+      - '_build/*.log.gz'
+      - '_build/*.coverprofile'
+      - '_build/junit-*.xml'
 
 

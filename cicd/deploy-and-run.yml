@@ -10,6 +10,9 @@ stages:
   rules:
     - when: always
 
+default:
+  interruptible: true
+
 trigger-deploy-and-run:
   stage: downstream
   extends:

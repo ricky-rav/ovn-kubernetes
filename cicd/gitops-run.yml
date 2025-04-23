@@ -1,6 +1,6 @@
 #
 # This is just bridging pipeline between
-# ovn-kubernetes pipelines and sdn/sdn-cicd pipeline.
+# ovn-kubernetes pipelines and sdn/gitops pipeline.
 # Purpose of it is variables isolation (see details in .gitlab-ci.yml)
 #
 stages:

@@ -92,7 +92,7 @@ default:
     - .always
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
-    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} -C cicd/containers
+    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C cicd/containers
     - image_current_tag=`cat cicd/containers/_registry/current-tag`
     - |
       cat > ./builder-image.yaml <<EOF

@@ -5,9 +5,15 @@
 $(if $(platform),$(info Building for platform $(platform)),$(error platform is not set))
 $(if $(dist),$(info Building for dist $(dist)),$(error dist is not set))
 $(if $(dist_version),$(info Building for dist version: $(dist_version)),$(error dist_version is not set))
+$(if $(controller-dir),$(info Controller dir: $(controller-dir)),$(error controller-dir is not set))
 
 image-name = builder-$(dist)$(dist_version)-$(platform)
 docker-file = $(dist)$(dist_version)-$(platform).dockerfile
+ginkgo-version = $(shell cat $(controller-dir)/go.mod | grep "^[[:space:]]*github.com/onsi/ginkgo/v2" | cut -d ' ' -f2)
+$(if $(ginkgo-version),$(info Ginkgo version: $(ginkgo-version)),$(error Cannot get ginkgo version))
+
+versions_profile = ginkgo:$(ginkgo-version)
+$(info Versions profile: $(versions_profile))
 
 # Check prerequisite variable are set:
 gitlab-api-v4 = $(if $(CI_API_V4_URL),$(CI_API_V4_URL),$(error CI_API_V4_URL is not set))
@@ -40,7 +46,7 @@ dep-sha256sum = $(shell echo $1 | sha256sum | cut -f1 -d ' ')
 cat-sha256sum = $(shell cat $1 | sha256sum | cut -f1 -d ' ')
 
 # Name of target tag of image with name $(image-name)
-target-tag := $(call dep-sha256sum,$(call cat-sha256sum, $(docker-file)))
+target-tag := $(call dep-sha256sum,$(versions_profile) $(call cat-sha256sum, $(docker-file)))
 $(info target image tag: $(target-tag))
 
 image-full-tag = $(gitlab-registry)/$(gitlab-project-path)/$(image-name):$(target-tag)
@@ -53,8 +59,10 @@ registry-dir = _registry
 all: registry $(registry-dir)/$(target-tag)
 	echo $(image-full-tag) > $(registry-dir)/current-tag
 
+build-args := ginkgo_version=$(ginkgo-version)
+
 $(registry-dir)/$(target-tag): $(docker-file)
-	docker build -f $(docker-file) -t $(image-full-tag) .
+	docker build $(addprefix --build-arg ,$(build-args)) -f $(docker-file) -t $(image-full-tag) .
 	docker push $(image-full-tag)
 
 # Create fake files with names same as tags inside registry dir:
