@@ -1,0 +1,60 @@
+
+stages:
+  - make-and-check
+
+include:
+  - cicd/runners-tags.yml
+
+default:
+  interruptible: true
+
+.always:
+  rules:
+    - when: always
+
+make-build:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make build -C go-controller
+
+make-windows:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make windows -C go-controller
+
+make-gofmt:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .tags-amd64
+    - .always
+  script:
+    - make gofmt -C go-controller
+
+make-check:amd64:
+  stage: make-and-check
+  image: ${image}
+  extends:
+    - .always
+  parallel: 11
+  timeout: 6 minutes
+  tags:
+    - sdn-cicd-16-runner
+  script:
+    - mkdir _build
+    - make -C cicd/unit-tests build-dir=$(pwd)/_build controller-dir=$(pwd)/go-controller group-no=$CI_NODE_INDEX groups-total=$CI_NODE_TOTAL
+  artifacts:
+    paths:
+      - '_build/*.log.gz'
+      - '_build/*.coverprofile'
+      - '_build/junit-*.xml'
+
+

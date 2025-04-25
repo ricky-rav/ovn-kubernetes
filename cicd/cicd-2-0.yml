@@ -1,0 +1,404 @@
+#
+# New generation pipeline
+#
+
+spec:
+  inputs:
+    k8s_version:
+      description: Kubernetes version for kubectl (passed to dist/images/Dockerfile)
+      default: v1.29.8
+    ovn_version:
+      description: Version of OVN that is used to build containers
+    ovs_version:
+      description: Version of OVS that is used to build containers
+    run_check:
+      description: Run unit tests before building artifiacts
+      type: boolean
+      default: true
+    run_gitops:
+      description: Run downstream pipeline in gitos to check artifacts
+      type: boolean
+      default: true
+
+---
+
+variables:
+  k8s_version: $[[ inputs.k8s_version ]]
+  ovn_version: $[[ inputs.ovn_version ]]
+  ovs_version: $[[ inputs.ovs_version ]]
+  run_check: $[[ inputs.run_check ]]
+  run_gitops: $[[ inputs.run_gitops ]]
+  run_deploy_tests: false
+  # Promote ovn_version above on success of pipeline
+  promote_ovn_on_success: false
+  source_project_name: $CI_PROJECT_NAME
+  image_tag: $CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+  container_registry: nvcr.io
+  container_registry_path: nv-ngn/sdn
+  container_registry_tag_path: ${container_registry}/${container_registry_path}
+  sdn_cicd_branch: dporokh-cicd
+  sdn_gitops_branch: main
+
+stages:
+  - setup-builder
+  - make-and-check
+  - build
+  - sign
+  - test
+  - promote
+
+include:
+  - cicd/runners-tags.yml
+  - cicd/image-tag.yml
+
+default:
+  interruptible: true
+
+.always:
+  rules:
+    - when: always
+
+.if-deploy-test:
+  rules:
+    - if: $run_deploy_tests == "true"
+
+.if-run-gitops:
+  rules:
+    - if: $run_gitops == "true"
+
+.if-run-check:
+  rules:
+    - if: $run_check == "true"
+
+.if-not-run-check:
+  rules:
+    - if: $run_check != "true"
+
+.if-promote-ovn-on-success:
+  rules:
+    - if: $promote_ovn_on_success == "true"
+
+# ================================================================================
+# Prepare builder images
+#
+# Input variables:
+# dist - linux distribution to build (rocky / ubuntu)
+# dist_version - linux distribution version (8.8 / 20.04
+# platform - target architecture build
+.setup-builder:
+  stage: setup-builder
+  image: ${builder_image}
+  extends:
+    - .always
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
+    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C cicd/containers
+    - image_current_tag=`cat cicd/containers/_registry/current-tag`
+    - |
+      cat > ./builder-image.yaml <<EOF
+      variables:
+        image: ${image_current_tag}
+        dist: ${dist}
+        dist_version: ${dist_version}
+        platform: ${platform}
+        k8s_version: ${k8s_version}
+        ovn_version: ${ovn_version}
+        ovs_version: ${ovs_version}
+        builder_image: ${builder_image}
+        image_tag: ${image_tag}
+        container_registry: ${container_registry}
+        container_registry_tag_path: ${container_registry_tag_path}
+      EOF
+    - cat builder-image.yaml
+  artifacts:
+    paths:
+      - builder-image.yaml
+
+setup-builder:rocky8.8-amd64:
+  variables:
+    platform: amd64
+    dist: rocky
+    dist_version: 8.8
+  extends:
+    - .tags-amd64
+    - .setup-builder
+    - .always
+
+setup-builder:rocky8.8-arm64:
+  variables:
+    platform: arm64
+    dist: rocky
+    dist_version: 8.8
+  extends:
+    - .tags-arm64
+    - .setup-builder
+    - .always
+
+setup-builder:ubuntu20.04-arm64:
+  variables:
+    platform: arm64
+    dist: ubuntu
+    dist_version: 20.04
+  extends:
+    - .tags-arm64
+    - .setup-builder
+
+# ================================================================================
+# Make and check for amd64
+#
+make-and-check:rocky8.8-amd64:
+  stage: make-and-check
+  extends:
+    - .if-run-check
+  needs:
+    - setup-builder:rocky8.8-amd64
+  trigger:
+    strategy: depend
+    include:
+      - artifact: builder-image.yaml
+        job: setup-builder:rocky8.8-amd64
+      - cicd/make-and-check-amd64.yml
+
+make-lint:
+  stage: make-and-check
+  extends:
+    - .tags-amd64
+    - .if-run-check
+  image: golangci/golangci-lint:v1.59
+  needs: []
+  script:
+    - pushd go-controller && golangci-lint run --max-same-issues 0 --verbose --print-resources-usage --modules-download-mode=vendor --timeout=15m0s && popd
+
+# ================================================================================
+# Build binaries for target platforms
+#
+build:rocky8.8-amd64:
+  stage: build
+  extends:
+    - .always
+  needs:
+    - setup-builder:rocky8.8-amd64
+  trigger:
+    strategy: depend
+    include:
+      - artifact: builder-image.yaml
+        job: setup-builder:rocky8.8-amd64
+      - cicd/build-amd64.yml
+
+build:rocky8.8-arm64:
+  stage: build
+  extends:
+    - .always
+  needs:
+    - setup-builder:rocky8.8-arm64
+  trigger:
+    strategy: depend
+    include:
+      - artifact: builder-image.yaml
+        job: setup-builder:rocky8.8-arm64
+      - cicd/build-arm64.yml
+
+build:ubuntu20.04-arm64:
+  stage: build
+  extends:
+    - .always
+  needs:
+    - setup-builder:ubuntu20.04-arm64
+  trigger:
+    strategy: depend
+    include:
+      - artifact: builder-image.yaml
+        job: setup-builder:ubuntu20.04-arm64
+      - cicd/build-arm64.yml
+
+# ================================================================================
+# Build multiarch image:
+#
+build:rocky8.8-multiarch:
+  stage: build
+  image: ${builder_image}
+  extends:
+    - .tags-amd64
+    - .always
+  needs:
+    - build:rocky8.8-arm64
+    - build:rocky8.8-amd64
+  script:
+    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
+    - |
+      make -C cicd/build-image -f multiarch.mk \
+            dist=rocky \
+            platforms="arm64 amd64" \
+            image-tag=${image_tag} \
+            registry-tag-path=${container_registry_tag_path}
+
+# ================================================================================
+# Sign images
+# TODO: image names must be get from make -C cicd/build-image ...
+.sign:
+  image: ${builder_image}
+  extends:
+    - .tags-amd64
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  script:
+    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
+    - cosign login -u \$oauthtoken -p ${NVCR_PASS} ${container_registry}
+    - make -C cicd/tools/image-sign nvsec-client-id=${STARFLEET_USER}  nvsec-client-secret=${STARFLEET_PASS} output=image.tag image-name=${container_registry_tag_path}/ovn-c:${image_tag}
+    - make -C cicd/tools/image-sign nvsec-client-id=${STARFLEET_USER}  nvsec-client-secret=${STARFLEET_PASS} output=image.tag image-name=${container_registry_tag_path}/ovnkube-c:${image_tag}
+    - make -C cicd/tools/image-sign nvsec-client-id=${STARFLEET_USER}  nvsec-client-secret=${STARFLEET_PASS} output=image.tag image-name=${container_registry_tag_path}/ovn-c-arm64:${image_tag}
+    - make -C cicd/tools/image-sign nvsec-client-id=${STARFLEET_USER}  nvsec-client-secret=${STARFLEET_PASS} output=image.tag image-name=${container_registry_tag_path}/ovnkube-c-arm64:${image_tag}
+    - cp cicd/tools/image-sign/image.tag .
+  artifacts:
+    paths:
+      - image.tag
+
+# Sign only if all tests are successful
+sign-checked:
+  stage: sign
+  extends:
+    - .if-run-check
+    - .sign
+  needs:
+    - make-lint
+    - make-and-check:rocky8.8-amd64
+    - build:rocky8.8-multiarch
+    - build:ubuntu20.04-arm64
+
+# Sign after build
+sign-not-checked:
+  stage: sign
+  extends:
+    - .if-not-run-check
+    - .sign
+  needs:
+    - build:rocky8.8-multiarch
+    - build:ubuntu20.04-arm64
+
+# Just collect artifacts from sign-checked or sign-not-checked
+sign:
+  stage: sign
+  extends:
+    - .tags-amd64
+    - .always
+  needs:
+    - job: sign-not-checked
+      optional: true
+    - job: sign-checked
+      optional: true
+  script:
+    - cat image.tag
+  artifacts:
+    paths:
+      - image.tag
+
+
+# ================================================================================
+# Tests
+#
+# We run downstream pipeline to isolate local variables from
+# downstream. Apparently today this is the only way to force interpolation
+# of some local variables without exposing ALL of them to downstream.
+#
+# Why not directly use of trigger:project:
+#   1. Setting job:variables does not interpolate variables recrusively and therefore ovn_kubernetes_image_tag
+#      is set to "$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID" and this causes that CI_COMMIT_SHORT_SHA and CI_PIPELINE_ID
+#      have value from downstream pipeline
+#
+#   2. Trigger with trigger:forward:yaml_variables == true passes ALL local
+#      variables to downstream and can override downstream variables with surprising
+#      results.
+#
+#   3. inherit:variables:false together with trigger:forward:yaml_variables == true prevents passing all local variables
+#      to downstream but unfortunatelly in this case job:variables are also only interpolated to ONE level (as in (1))
+#
+prepare-deploy-and-run:
+  stage: test
+  extends:
+    - .tags-amd64
+    - .if-deploy-test
+  script:
+    - |
+      cat > ./cicd/deploy-and-run-vars.yml <<EOF
+      variables:
+        source_project_name: $source_project_name
+        source_project_path: $CI_PROJECT_PATH
+        source_repo_branch: $CI_COMMIT_BRANCH
+        ovn_kubernetes_image_tag: $image_tag
+        image_tag: $image_tag
+        source_repo_commit_sha: $CI_COMMIT_SHA
+        sdn_cicd_branch: $sdn_cicd_branch
+        run_kind_e2e_tests: true
+      EOF
+    - cat cicd/deploy-and-run-vars.yml
+  artifacts:
+    paths:
+      - cicd/deploy-and-run-vars.yml
+
+deploy-and-run:
+  stage: test
+  extends:
+    - .if-deploy-test
+  needs:
+    - prepare-deploy-and-run
+  trigger:
+    strategy: depend
+    include:
+      - artifact: cicd/deploy-and-run-vars.yml
+        job: prepare-deploy-and-run
+      - cicd/deploy-and-run.yml
+
+prepare-gitops-run:
+  stage: test
+  extends:
+    - .tags-amd64
+    - .if-run-gitops
+  script:
+    - |
+      cat > ./cicd/gitops-run-vars.yml <<EOF
+      variables:
+        sdn_gitops_branch: $sdn_gitops_branch
+        OVN_KUBERNETES_IMAGE_TAG: $image_tag
+      EOF
+    - cat cicd/gitops-run-vars.yml
+  artifacts:
+    paths:
+      - cicd/gitops-run-vars.yml
+
+run-gitops:
+  stage: test
+  extends:
+    - .if-run-gitops
+  needs:
+    - prepare-gitops-run
+  trigger:
+    strategy: depend
+    include:
+      - artifact: cicd/gitops-run-vars.yml
+        job: prepare-gitops-run
+      - cicd/gitops-run.yml
+
+# ================================================================================
+# Promotion of OVN:
+#
+promote-ovn:
+  stage: promote
+  image: ${builder_image}
+  extends:
+    - .tags-amd64
+    - .if-promote-ovn-on-success
+  script:
+    - git config --global user.email "$GITLAB_USER_EMAIL"
+    - git config --global user.name "$GITLAB_USER_NAME"
+    - git checkout $CI_COMMIT_BRANCH
+    - |
+      sed -i "s/^\\( *ovn_version: *\\)[.0-9a-zA-Z]*/\\1$ovn_version/" ./cicd/cicd-2-0.yml
+    - git diff
+    - |
+      if [ -n "$(git status --porcelain)" ]; then
+         git add ./.gitlab-ci.yml
+         git commit -m "Update ovn_version to $ovn_version [ci skip]"
+         git push
+      else
+         echo "Version is not changed ($ovn_version)"
+      fi
