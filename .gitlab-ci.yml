@@ -45,6 +45,7 @@ cicd-2-0:prepare-mr:
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - run_check=`yq -r '.cicd.skip_make_check != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_kind_e2e_tests=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_build_and_sign=true
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     - |
@@ -66,6 +67,12 @@ cicd-2-0:prepare-mr:
           run_check: ${run_check}
           run_build_and_sign: ${run_build_and_sign}
           run_gitops: ${run_gitops}
+          run_kind_e2e_tests: ${run_kind_e2e_tests}
+          run_flow_tests: false
+          source_project_name: $CI_PROJECT_NAME
+          source_project_path: $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH
+          source_repo_branch: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+          source_repo_commit_sha: $CI_COMMIT_SHA
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
@@ -101,7 +108,13 @@ cicd-2-0:prepare-fork:
           run_check: true
           run_build_and_sign: false
           run_gitops: false
+          run_kind_e2e_tests: false
+          run_flow_tests: false
           force_instance_runners: true
+          source_project_name: .not-defined
+          source_project_path: .not-defined
+          source_repo_branch: .not-defined
+          source_repo_commit_sha: .not-defined
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
