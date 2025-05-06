@@ -11,12 +11,20 @@ spec:
       description: Version of OVN that is used to build containers
     ovs_version:
       description: Version of OVS that is used to build containers
+    image_tag:
+      description: Tag for OVN kuberentes images that will be produced
+         or used during testing (if run_build_and_sign is set to false)
     run_check:
       description: Run unit tests before building artifiacts
       type: boolean
       default: true
     run_gitops:
       description: Run downstream pipeline in gitos to check artifacts
+      type: boolean
+      default: true
+    run_build_and_sign:
+      description: If set to false then skip build and sign phases
+        run_check is still optional and can be run.
       type: boolean
       default: true
 
@@ -26,13 +34,14 @@ variables:
   k8s_version: $[[ inputs.k8s_version ]]
   ovn_version: $[[ inputs.ovn_version ]]
   ovs_version: $[[ inputs.ovs_version ]]
+  run_build_and_sign: $[[ inputs.run_build_and_sign ]]
   run_check: $[[ inputs.run_check ]]
   run_gitops: $[[ inputs.run_gitops ]]
   run_deploy_tests: false
   # Promote ovn_version above on success of pipeline
   promote_ovn_on_success: false
   source_project_name: $CI_PROJECT_NAME
-  image_tag: $CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+  image_tag: $[[ inputs.image_tag ]]
   container_registry: nvcr.io
   container_registry_path: nv-ngn/sdn
   container_registry_tag_path: ${container_registry}/${container_registry_path}
@@ -54,9 +63,25 @@ include:
 default:
   interruptible: true
 
-.always:
+.if-setup-builder:
   rules:
-    - when: always
+    - if: $run_build_and_sign == "true" || $run_check == "true"
+
+.if-build:
+  rules:
+    - if: $run_build_and_sign == "true"
+
+.if-sign:
+  rules:
+    - if: $run_build_and_sign == "true"
+
+.if-sign-and-check:
+  rules:
+    - if: $run_build_and_sign == "true" && $run_check == "true"
+
+.if-sign-unchecked:
+  rules:
+    - if: $run_build_and_sign == "true" && $run_check != "true"
 
 .if-deploy-test:
   rules:
@@ -70,13 +95,14 @@ default:
   rules:
     - if: $run_check == "true"
 
-.if-not-run-check:
-  rules:
-    - if: $run_check != "true"
-
 .if-promote-ovn-on-success:
   rules:
     - if: $promote_ovn_on_success == "true"
+
+# If nothing left in pipeline then do NOP job to prevent failure
+.if-run-nop:
+  rules:
+    - if: $run_deploy_tests != "true" && $run_check != "true" && $run_deploy_tests != "true" && $run_build_and_sign != "true" && $run_gitops != "true"
 
 # ================================================================================
 # Prepare builder images
@@ -88,8 +114,6 @@ default:
 .setup-builder:
   stage: setup-builder
   image: ${builder_image}
-  extends:
-    - .always
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
     - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C cicd/containers
@@ -122,7 +146,7 @@ setup-builder:rocky8.8-amd64:
   extends:
     - .tags-amd64
     - .setup-builder
-    - .always
+    - .if-setup-builder
 
 setup-builder:rocky8.8-arm64:
   variables:
@@ -132,7 +156,7 @@ setup-builder:rocky8.8-arm64:
   extends:
     - .tags-arm64
     - .setup-builder
-    - .always
+    - .if-setup-builder
 
 setup-builder:ubuntu20.04-arm64:
   variables:
@@ -142,6 +166,7 @@ setup-builder:ubuntu20.04-arm64:
   extends:
     - .tags-arm64
     - .setup-builder
+    - .if-setup-builder
 
 # ================================================================================
 # Make and check for amd64
@@ -175,7 +200,7 @@ make-lint:
 build:rocky8.8-amd64:
   stage: build
   extends:
-    - .always
+    - .if-build
   needs:
     - setup-builder:rocky8.8-amd64
   trigger:
@@ -188,7 +213,7 @@ build:rocky8.8-amd64:
 build:rocky8.8-arm64:
   stage: build
   extends:
-    - .always
+    - .if-build
   needs:
     - setup-builder:rocky8.8-arm64
   trigger:
@@ -201,7 +226,7 @@ build:rocky8.8-arm64:
 build:ubuntu20.04-arm64:
   stage: build
   extends:
-    - .always
+    - .if-build
   needs:
     - setup-builder:ubuntu20.04-arm64
   trigger:
@@ -219,7 +244,7 @@ build:rocky8.8-multiarch:
   image: ${builder_image}
   extends:
     - .tags-amd64
-    - .always
+    - .if-build
   needs:
     - build:rocky8.8-arm64
     - build:rocky8.8-amd64
@@ -257,7 +282,7 @@ build:rocky8.8-multiarch:
 sign-checked:
   stage: sign
   extends:
-    - .if-run-check
+    - .if-sign-and-check
     - .sign
   needs:
     - make-lint
@@ -269,7 +294,7 @@ sign-checked:
 sign-not-checked:
   stage: sign
   extends:
-    - .if-not-run-check
+    - .if-sign-unchecked
     - .sign
   needs:
     - build:rocky8.8-multiarch
@@ -280,7 +305,7 @@ sign:
   stage: sign
   extends:
     - .tags-amd64
-    - .always
+    - .if-sign
   needs:
     - job: sign-not-checked
       optional: true
@@ -377,6 +402,15 @@ run-gitops:
       - artifact: cicd/gitops-run-vars.yml
         job: prepare-gitops-run
       - cicd/gitops-run.yml
+
+# This jobs prevents from running
+nop:
+  stage: test
+  extends:
+    - .tags-amd64
+    - .if-run-nop
+  script:
+    - echo No tests needed. Prevent pipeline failure by NOP.
 
 # ================================================================================
 # Promotion of OVN:

@@ -22,6 +22,16 @@ cicd-2-0:prepare:
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag'  ./cicd-nv-ovn-kubernetes.yaml`
     - run_check=`yq -r '.cicd.skip_make_check != true'  ./cicd-nv-ovn-kubernetes.yaml`
     - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true'  ./cicd-nv-ovn-kubernetes.yaml`
+    - run_build_and_sign=true
+    - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - |
+      if [[ ! -z $PRE_DEF_TAG ]] ; then
+        echo "Using pre defined tag $PRE_DEF_TAG"
+        echo "disable unit test checks and build"
+        run_check=false
+        run_build_and_sign=false
+        image_tag=$PRE_DEF_TAG
+      fi
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
@@ -29,7 +39,9 @@ cicd-2-0:prepare:
         inputs:
           ovn_version: ${ovn_version}
           ovs_version: ${ovs_version}
+          image_tag: ${image_tag}
           run_check: ${run_check}
+          run_build_and_sign: ${run_build_and_sign}
           run_gitops: ${run_gitops}
       EOF
     - cat ./cicd-2-0-trigger.yaml
