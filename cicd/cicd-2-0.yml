@@ -27,6 +27,11 @@ spec:
         run_check is still optional and can be run.
       type: boolean
       default: true
+    force_instance_runners:
+      description: Use gitlab instance runners for pipeline instead of
+         using optimized project runners (for forked repositories)
+      type: boolean
+      default: false
 
 ---
 
@@ -38,6 +43,7 @@ variables:
   run_check: $[[ inputs.run_check ]]
   run_gitops: $[[ inputs.run_gitops ]]
   run_deploy_tests: false
+  force_instance_runners: $[[ inputs.force_instance_runners ]]
   # Promote ovn_version above on success of pipeline
   promote_ovn_on_success: false
   source_project_name: $CI_PROJECT_NAME
@@ -64,6 +70,11 @@ default:
   interruptible: true
 
 .if-setup-builder:
+  rules:
+    - if: $run_build_and_sign == "true"
+
+# AMD64 builder is used for run check
+.if-setup-builder-rocky-amd64:
   rules:
     - if: $run_build_and_sign == "true" || $run_check == "true"
 
@@ -102,7 +113,11 @@ default:
 # If nothing left in pipeline then do NOP job to prevent failure
 .if-run-nop:
   rules:
-    - if: $run_deploy_tests != "true" && $run_check != "true" && $run_deploy_tests != "true" && $run_build_and_sign != "true" && $run_gitops != "true"
+    - if: >
+        (  "true" != $run_check
+        && "true" != $run_deploy_tests
+        && "true" != $run_build_and_sign
+        && "true" != $run_gitops )
 
 # ================================================================================
 # Prepare builder images
@@ -132,7 +147,24 @@ default:
         image_tag: ${image_tag}
         container_registry: ${container_registry}
         container_registry_tag_path: ${container_registry_tag_path}
+        force_instance_runners: ${force_instance_runners}
+      include:
+        - cicd/runners-tags.yml
       EOF
+    - |
+      if [[ $force_instance_runners == true ]] ; then cat >> ./builder-image.yaml <<EOF
+      .unit-test-tags:
+        extends:
+          - .tags-amd64
+      EOF
+      fi
+    - |
+      if [[ $force_instance_runners == false ]] ; then cat >> ./builder-image.yaml <<EOF
+      .unit-test-tags:
+        tags:
+          - sdn-cicd-16-runner
+      EOF
+      fi
     - cat builder-image.yaml
   artifacts:
     paths:
@@ -146,7 +178,7 @@ setup-builder:rocky8.8-amd64:
   extends:
     - .tags-amd64
     - .setup-builder
-    - .if-setup-builder
+    - .if-setup-builder-rocky-amd64
 
 setup-builder:rocky8.8-arm64:
   variables:
