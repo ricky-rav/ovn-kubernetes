@@ -81,6 +81,12 @@ cicd-2-0:prepare-mr:
           source_project_path: $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH
           source_repo_branch: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
           source_repo_commit_sha: $CI_COMMIT_SHA
+          email_message_description: |
+              $GITLAB_USER_NAME just built and pushed ovnkube
+              CommitID: $CI_COMMIT_SHORT_SHA
+              Pipeline URL: $CI_PIPELINE_URL
+              Merge request: $CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID
+
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:

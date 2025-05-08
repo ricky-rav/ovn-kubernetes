@@ -57,6 +57,21 @@ spec:
       default: master
       description: Branch in sdn/sdn-cicd repository that will be used
         for kind e2e pipelines.
+    email_message_to:
+      description: To-field of e-mail
+      type: string
+      default: $GITLAB_USER_EMAIL
+    email_message_subject:
+      description: Subject of e-mail notification with generated artifaces
+      type: string
+      default: "$CI_PROJECT_TITLE CI pipleine branch: $CI_COMMIT_REF_NAME commit: $CI_COMMIT_SHORT_SHA"
+    email_message_description:
+      description: Description part of the sent email
+      type: string
+      default: |
+        $GITLAB_USER_NAME just built and pushed ovnkube
+        CommitID: $CI_COMMIT_SHORT_SHA
+        Pipeline URL: $CI_PIPELINE_URL
 
 ---
 
@@ -93,6 +108,7 @@ stages:
   - sign
   - test
   - promote
+  - notify
 
 include:
   - cicd/runners-tags.yml
@@ -150,6 +166,12 @@ default:
         && "true" != $run_kind_e2e_tests
         && "true" != $run_build_and_sign
         && "true" != $run_gitops )
+
+.if-send-notify:
+  rules:
+    - if: >
+        "true" == $run_build_and_sign
+
 
 # ================================================================================
 # Prepare builder images
@@ -501,3 +523,28 @@ promote-ovn:
       else
          echo "Version is not changed ($ovn_version)"
       fi
+
+# ================================================================================
+# Send e-mail to pipeline inititor
+#
+notify:
+  stage: notify
+  image: gitlab-master.nvidia.com:5005/ngc/apps/woof:latest
+  extends:
+    - .tags-amd64
+    - .if-send-notify
+  needs:
+    - sign
+  variables:
+    to: $[[ inputs.email_message_to ]]
+    subject: $[[ inputs.email_message_subject ]]
+    notify_msg_file: .gitlab/_email_message
+  script:
+    - |
+      cat | sed 's/$/ <br\/>/' > $notify_msg_file  <<EOF
+      $[[ inputs.email_message_description ]]
+      ---
+      Artifacts
+      EOF
+    - cat image.tag | sed 's/$/ <br\/>/' >> $notify_msg_file
+    - /tmp/sendmail.py "$to" "$subject" --msg "`cat $notify_msg_file`"
