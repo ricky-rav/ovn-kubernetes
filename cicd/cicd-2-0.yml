@@ -57,6 +57,25 @@ spec:
       default: master
       description: Branch in sdn/sdn-cicd repository that will be used
         for kind e2e pipelines.
+    promote_helm:
+      description: if set to true then promotion pipeline will be triggered
+         in helm repository
+      type: boolean
+    promote_helm_repo:
+      description: repostitory that handles promotion pipeline
+      type: string
+      default: sdn/sdn-helm/ovn-kubernetes
+    promote_helm_branch:
+      description: repostitory branch that handles promotion pipeline
+      type: string
+    promote_helm_values_yaml:
+      description: yaml file in helm repo
+      type: string
+      default: values-images.yaml
+    promote_helm_dry_run:
+      description: yaml file in helm repo
+      type: boolean
+      default: false
     email_message_to:
       description: To-field of e-mail
       type: string
@@ -100,6 +119,11 @@ variables:
   container_registry_path: nv-ngn/sdn
   container_registry_tag_path: ${container_registry}/${container_registry_path}
   sdn_gitops_branch: main
+  promote_helm: $[[ inputs.promote_helm ]]
+  promote_helm_repo: $[[ inputs.promote_helm_repo ]]
+  promote_helm_branch: $[[ inputs.promote_helm_branch ]]
+  promote_helm_values_yaml: $[[ inputs.promote_helm_values_yaml ]]
+  promote_helm_dry_run: $[[ inputs.promote_helm_dry_run ]]
 
 stages:
   - setup-builder
@@ -158,6 +182,24 @@ default:
   rules:
     - if: $promote_ovn_on_success == "true"
 
+.if-promote-helm:
+  rules:
+    - if: $promote_helm == "true"
+
+# Send e-mail after image sign
+.if-send-notify-signed:
+  rules:
+    - if: >
+        (  "true" == $run_build_and_sign
+        && "true" != $promote_helm )
+
+# Send e-mail after promotion
+.if-send-notify-promoted:
+  rules:
+    - if: >
+        (  "true" == $run_build_and_sign
+        && "true" == $promote_helm )
+
 # If nothing left in pipeline then do NOP job to prevent failure
 .if-run-nop:
   rules:
@@ -165,13 +207,8 @@ default:
         (  "true" != $run_check
         && "true" != $run_kind_e2e_tests
         && "true" != $run_build_and_sign
-        && "true" != $run_gitops )
-
-.if-send-notify:
-  rules:
-    - if: >
-        "true" == $run_build_and_sign
-
+        && "true" != $run_gitops
+        && "true" != $promote_helm )
 
 # ================================================================================
 # Prepare builder images
@@ -490,17 +527,8 @@ run-gitops:
         job: prepare-gitops-run
       - cicd/gitops-run.yml
 
-# This jobs prevents from running
-nop:
-  stage: test
-  extends:
-    - .tags-amd64
-    - .if-run-nop
-  script:
-    - echo No tests needed. Prevent pipeline failure by NOP.
-
 # ================================================================================
-# Promotion of OVN:
+# Promotion
 #
 promote-ovn:
   stage: promote
@@ -524,17 +552,61 @@ promote-ovn:
          echo "Version is not changed ($ovn_version)"
       fi
 
+promote-helm:prepare:
+  stage: promote
+  extends:
+    - .tags-amd64
+    - .if-promote-helm
+  needs:
+    - sign
+    - job: run-gitops
+      optional: true
+    - job: sdn-cicd
+      optional: true
+  script:
+    - promote_helm_ovn_c_sha256=`grep "^${container_registry_tag_path}/ovn-c:" image.tag | sed s/.*@sha256://`
+    - promote_helm_ovn_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovn-c-arm64:" image.tag | sed s/.*@sha256://`
+    - promote_helm_ovnkube_c_sha256=`grep "^${container_registry_tag_path}/ovnkube-c:" image.tag | sed s/.*@sha256://`
+    - promote_helm_ovnkube_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovnkube-c-arm64:" image.tag | sed s/.*@sha256://`
+    - |
+      cat > ./cicd/promote-helm-run-vars.yml <<EOF
+      variables:
+        promote_helm_image_tag: $image_tag
+        promote_helm_ovn_c_sha256: $promote_helm_ovn_c_sha256
+        promote_helm_ovn_c_arm64_sha256: $promote_helm_ovn_c_arm64_sha256
+        promote_helm_ovnkube_c_sha256: $promote_helm_ovnkube_c_sha256
+        promote_helm_ovnkube_c_arm64_sha256: $promote_helm_ovnkube_c_arm64_sha256
+        promote_helm_repo: $promote_helm_repo
+        promote_helm_branch: $promote_helm_branch
+        promote_helm_values_yaml: $promote_helm_values_yaml
+        promote_helm_dry_run: $promote_helm_dry_run
+      EOF
+    - cat cicd/promote-helm-run-vars.yml
+  artifacts:
+    paths:
+      - cicd/promote-helm-run-vars.yml
+
+promote-helm:
+  stage: promote
+  extends:
+    - .if-promote-helm
+  needs:
+    - promote-helm:prepare
+  trigger:
+    strategy: depend
+    include:
+      - artifact: cicd/promote-helm-run-vars.yml
+        job: promote-helm:prepare
+      - cicd/promote-helm.yml
+
+  
+
 # ================================================================================
 # Send e-mail to pipeline inititor
 #
-notify:
+.notify:
   stage: notify
   image: gitlab-master.nvidia.com:5005/ngc/apps/woof:latest
-  extends:
-    - .tags-amd64
-    - .if-send-notify
-  needs:
-    - sign
   variables:
     to: $[[ inputs.email_message_to ]]
     subject: $[[ inputs.email_message_subject ]]
@@ -548,3 +620,35 @@ notify:
       EOF
     - cat image.tag | sed 's/$/ <br\/>/' >> $notify_msg_file
     - /tmp/sendmail.py "$to" "$subject" --msg "`cat $notify_msg_file`"
+
+notify:signed:
+  stage: notify
+  image: gitlab-master.nvidia.com:5005/ngc/apps/woof:latest
+  extends:
+    - .notify
+    - .tags-amd64
+    - .if-send-notify-signed
+  needs:
+    - sign
+
+notify:promoted:
+  stage: notify
+  image: gitlab-master.nvidia.com:5005/ngc/apps/woof:latest
+  extends:
+    - .notify
+    - .tags-amd64
+    - .if-send-notify-promoted
+  needs:
+    - sign
+    - promote-helm
+
+# ================================================================================
+# If nothing else need to be done in pipeline
+#
+nop:
+  stage: test
+  extends:
+    - .tags-amd64
+    - .if-run-nop
+  script:
+    - echo No tests needed. Prevent pipeline failure by NOP.
