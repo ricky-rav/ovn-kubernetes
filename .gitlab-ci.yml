@@ -7,21 +7,44 @@ include:
     file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
     ref: 'master'
 
+# Check that CICD 2.0 pipeline is executed as part of merge request:
+# Either from forked repository to sdn/ovn-kubernetes or
+# as branch inside sdn/ovn-kubernetes.
+.need-run-cicd-2-0-mr:
+  rules:
+    - if: >
+        (  $RUN_CICD_2_0 == "true"
+        && $CI_PIPELINE_SOURCE == "merge_request_event")
+
+# Checks that CICD 2.0 pipeline is executed from forked repostitory
+.need-run-cicd-2-0-forked:
+  rules:
+    - if: >
+        (  $RUN_CICD_2_0 == "true"
+        && $CI_PIPELINE_SOURCE == "push"
+        && $CI_PROJECT_ROOT_NAMESPACE != "sdn")
+
+# Checks that CICD 2.0 need to be run.
+# Limitation is applied: only run supported pipelines.
 .need-run-cicd-2-0:
   rules:
-    - if: '$RUN_CICD_2_0 == "true" && $CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: >
+        (  $RUN_CICD_2_0 == "true"
+        && ( $CI_PIPELINE_SOURCE == "merge_request_event"
+          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != "sdn" ))
 
-cicd-2-0:prepare:
+# Prepare data for merge request CI/CD 2.0 pipeline
+cicd-2-0:prepare-mr:
   stage: Init-pipeline
   needs: []
   allow_failure: true
   extends:
-    - .need-run-cicd-2-0
+    - .need-run-cicd-2-0-mr
   script:
-    - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag'  ./cicd-nv-ovn-kubernetes.yaml`
-    - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag'  ./cicd-nv-ovn-kubernetes.yaml`
-    - run_check=`yq -r '.cicd.skip_make_check != true'  ./cicd-nv-ovn-kubernetes.yaml`
-    - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true'  ./cicd-nv-ovn-kubernetes.yaml`
+    - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
+    - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_check=`yq -r '.cicd.skip_make_check != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_build_and_sign=true
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     - |
@@ -45,6 +68,61 @@ cicd-2-0:prepare:
           run_gitops: ${run_gitops}
       EOF
     - cat ./cicd-2-0-trigger.yaml
+  artifacts:
+    paths:
+      - cicd-2-0-trigger.yaml
+
+# Prepare data for forked repository CI/CD 2.0 pipeline
+cicd-2-0:prepare-fork:
+  stage: Init-pipeline
+  needs: []
+  extends:
+    - .need-run-cicd-2-0-forked
+  script:
+    - |
+      if [[ -z $GITLAB_READ_API_TOKEN ]] ; then
+        echo Please setup your fork. You need:
+        echo   1. Generate read token via gitlab UI:
+        echo      Access Tokens > [Add new token]
+        echo      Select scope: read_api
+        echo   2. Add GITLAB_READ_API_TOKEN variable with
+        echo      generated token value via gitlab UI:
+        echo      Settings / CI/CD / Variables
+        exit 1
+      fi
+    - |
+      cat > ./cicd-2-0-trigger.yaml <<EOF
+      include:
+        local: cicd/cicd-2-0.yml
+        inputs:
+          ovn_version: .not-defined
+          ovs_version: .not-defined
+          image_tag: .not-defined
+          run_check: true
+          run_build_and_sign: false
+          run_gitops: false
+          force_instance_runners: true
+      EOF
+    - cat ./cicd-2-0-trigger.yaml
+  artifacts:
+    paths:
+      - cicd-2-0-trigger.yaml
+
+# Collect artifacts from prepare phase to pass
+# it to triggered pipeline. Prepare phase can be one
+# but in this case it should contain all options together
+# and it is much harder to follow
+cicd-2-0:prepare:
+  stage: Init-pipeline
+  extends:
+    - .need-run-cicd-2-0
+  needs:
+    - job: cicd-2-0:prepare-fork
+      optional: true
+    - job: cicd-2-0:prepare-mr
+      optional: true
+  script:
+    - cat cicd-2-0-trigger.yaml
   artifacts:
     paths:
       - cicd-2-0-trigger.yaml

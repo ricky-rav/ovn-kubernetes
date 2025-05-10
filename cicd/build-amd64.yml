@@ -4,7 +4,6 @@ stages:
   - image
 
 include:
-  - cicd/runners-tags.yml
   - cicd/build-common.yml
 
 default:
