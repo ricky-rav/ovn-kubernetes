@@ -4,10 +4,9 @@
 projectID: 2649
 buildOvnKubernetes:
   OVN:
-    pkgTag: 24.09.1.cac4894f.24546247
+    pkgTag: 25.03.0.01b86c27.28267085
   OVS:
-    pkgTag: 3.4.1.b4453a2f.22312704
-    
+    pkgTag: 3.5.0.78691c73.28267085
 # helm deployment info for this branch
 # These repos and branches will be used by CICD to deploy the relevant helm charts
 # on the CICD rig chosen
@@ -26,23 +25,20 @@ deploy:
     sdn-mutator:
       repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-mutator.git
       branch: main
-
 test:
   flowTests:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/ovn-k8s-flow-tests.git
     branch: nv-main
     commitID: HEAD
     MR: 0
-
   cicd-tests:
     # Set here which cicd test groups needs to run. Default: all tests
     run-groups:
       - all
     exclude:
-      # Add tests to exclude here:
-      # Example:
-      # - connect-to
-
+    # Add tests to exclude here:
+    # Example:
+    # - connect-to
 cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
@@ -50,7 +46,6 @@ cicd:
   skip_flowTests: false
   skip_SDN_tests: false
   SDN_LOCK_lock_on_failure: false
-
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
@@ -61,5 +56,3 @@ artifacts:
     projectID: 109659
     branch: nv-1.3
     values_yaml: values-images.yaml
-
-
