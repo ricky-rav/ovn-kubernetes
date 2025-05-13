@@ -128,7 +128,7 @@ cicd-2-0:prepare:
       - cicd-2-0-trigger.yaml
 
 cicd-2-0:
-  stage: Build
+  stage: .post
   allow_failure: true
   extends:
     - .need-run-cicd-2-0
