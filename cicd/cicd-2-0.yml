@@ -32,6 +32,31 @@ spec:
          using optimized project runners (for forked repositories)
       type: boolean
       default: false
+    run_kind_e2e_tests:
+      description: Run downstream kind e2e check pipeline to check artifacts
+      type: boolean
+      default: true
+    run_flow_tests:
+      description: Run downstream flow tests pipeline to check artifacts
+      type: boolean
+      default: false
+    source_project_name:
+      description: Source project name repo that triggered pipeline (needed for kind_e2e)
+      type: string
+    source_project_path:
+      description: Branch of the repo that triggered pipeline (needed for kind_e2e)
+      type: string
+    source_repo_branch:
+      description: Branch of the repo that triggered pipeline (needed for kind_e2e)
+      type: string
+    source_repo_commit_sha:
+      description: Commit sha on repo that triggered pipeline (needed for kind_e2e)
+      type: string
+    sdn_cicd_branch:
+      type: string
+      default: master
+      description: Branch in sdn/sdn-cicd repository that will be used
+        for kind e2e pipelines.
 
 ---
 
@@ -42,16 +67,23 @@ variables:
   run_build_and_sign: $[[ inputs.run_build_and_sign ]]
   run_check: $[[ inputs.run_check ]]
   run_gitops: $[[ inputs.run_gitops ]]
-  run_deploy_tests: false
   force_instance_runners: $[[ inputs.force_instance_runners ]]
   # Promote ovn_version above on success of pipeline
   promote_ovn_on_success: false
   source_project_name: $CI_PROJECT_NAME
   image_tag: $[[ inputs.image_tag ]]
+  run_kind_e2e_tests: $[[ inputs.run_kind_e2e_tests ]]
+  run_flow_tests: $[[ inputs.run_flow_tests ]]
+  # Promote ovn_version above on success of pipeline
+  promote_ovn_on_success: false
+  source_project_path: $[[ inputs.source_project_path ]]
+  source_project_name: $[[ inputs.source_project_name ]]
+  source_repo_branch: $[[ inputs.source_repo_branch ]]
+  source_repo_commit_sha: $[[ inputs.source_repo_commit_sha ]]
+  sdn_cicd_branch: $[[ inputs.sdn_cicd_branch ]]
   container_registry: nvcr.io
   container_registry_path: nv-ngn/sdn
   container_registry_tag_path: ${container_registry}/${container_registry_path}
-  sdn_cicd_branch: dporokh-cicd
   sdn_gitops_branch: main
 
 stages:
@@ -94,9 +126,9 @@ default:
   rules:
     - if: $run_build_and_sign == "true" && $run_check != "true"
 
-.if-deploy-test:
+.if-sdn-cicd-test:
   rules:
-    - if: $run_deploy_tests == "true"
+    - if: $run_flow_tests == "true" || $run_kind_e2e_tests == "true"
 
 .if-run-gitops:
   rules:
@@ -115,7 +147,7 @@ default:
   rules:
     - if: >
         (  "true" != $run_check
-        && "true" != $run_deploy_tests
+        && "true" != $run_kind_e2e_tests
         && "true" != $run_build_and_sign
         && "true" != $run_gitops )
 
@@ -369,41 +401,42 @@ sign:
 #   3. inherit:variables:false together with trigger:forward:yaml_variables == true prevents passing all local variables
 #      to downstream but unfortunatelly in this case job:variables are also only interpolated to ONE level (as in (1))
 #
-prepare-deploy-and-run:
+prepare-sdn-cicd:
   stage: test
   extends:
     - .tags-amd64
-    - .if-deploy-test
+    - .if-sdn-cicd-test
   script:
     - |
-      cat > ./cicd/deploy-and-run-vars.yml <<EOF
+      cat > ./cicd/sdn-cicd-vars.yml <<EOF
       variables:
         source_project_name: $source_project_name
-        source_project_path: $CI_PROJECT_PATH
-        source_repo_branch: $CI_COMMIT_BRANCH
+        source_project_path: $source_project_path
+        source_repo_branch: $source_repo_branch
         ovn_kubernetes_image_tag: $image_tag
         image_tag: $image_tag
-        source_repo_commit_sha: $CI_COMMIT_SHA
+        source_repo_commit_sha: $source_repo_commit_sha
         sdn_cicd_branch: $sdn_cicd_branch
-        run_kind_e2e_tests: true
+        run_kind_e2e_tests: $run_kind_e2e_tests
+        run_flow_tests: $run_flow_tests
       EOF
-    - cat cicd/deploy-and-run-vars.yml
+    - cat cicd/sdn-cicd-vars.yml
   artifacts:
     paths:
-      - cicd/deploy-and-run-vars.yml
+      - cicd/sdn-cicd-vars.yml
 
-deploy-and-run:
+sdn-cicd:
   stage: test
   extends:
-    - .if-deploy-test
+    - .if-sdn-cicd-test
   needs:
-    - prepare-deploy-and-run
+    - prepare-sdn-cicd
   trigger:
     strategy: depend
     include:
-      - artifact: cicd/deploy-and-run-vars.yml
-        job: prepare-deploy-and-run
-      - cicd/deploy-and-run.yml
+      - artifact: cicd/sdn-cicd-vars.yml
+        job: prepare-sdn-cicd
+      - cicd/sdn-cicd-run.yml
 
 prepare-gitops-run:
   stage: test

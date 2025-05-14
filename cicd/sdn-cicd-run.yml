@@ -13,7 +13,7 @@ stages:
 default:
   interruptible: true
 
-trigger-deploy-and-run:
+trigger-sdn-cicd-run:
   stage: downstream
   extends:
     - .always
