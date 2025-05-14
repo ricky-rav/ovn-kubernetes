@@ -122,6 +122,7 @@ cicd-2-0:prepare-mr:
           source_repo_commit_sha: $CI_COMMIT_SHA
           promote_helm: false
           promote_helm_branch: .not-defined
+          latest_tag: .not-defined
           email_message_description: |
               $GITLAB_USER_NAME just built and pushed ovnkube
               CommitID: $CI_COMMIT_SHORT_SHA
@@ -173,6 +174,7 @@ cicd-2-0:prepare-fork:
           source_repo_commit_sha: .not-defined
           promote_helm: false
           promote_helm_branch: .not-defined
+          latest_tag: .not-defined
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
@@ -198,6 +200,7 @@ cicd-2-0:prepare-release:
     - promote_helm_repo=`yq -r ".artifacts.helm.repo"  ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - promote_helm_branch=`yq -r ".artifacts.helm.branch"  ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_values_yaml=`yq -r ".artifacts.helm.values_yaml"  ./cicd-nv-ovn-kubernetes.yaml`
+    - latest_tag=`yq -r ".artifacts.latestImageNameTag" ./cicd-nv-ovn-kubernetes.yaml`
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
@@ -220,6 +223,7 @@ cicd-2-0:prepare-release:
           promote_helm_branch: ${promote_helm_branch}
           promote_helm_values_yaml: ${promote_helm_values_yaml}
           promote_helm_dry_run: ${RUN_CICD_1_0:-"false"}
+          latest_tag: ${latest_tag}
           email_message_description: |
               $GITLAB_USER_NAME just built and pushed ovnkube
               CommitID: $CI_COMMIT_SHORT_SHA
