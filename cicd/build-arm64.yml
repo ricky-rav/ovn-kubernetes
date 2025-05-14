@@ -26,6 +26,10 @@ image:arm64:
     - .ovn-k8s-build-image
     - .always
 
-
-
-
+image-netprobes:arm64:
+  image: ${builder_image}
+  stage: image
+  extends:
+    - .tags-arm64
+    - .ovn-k8s-build-netprobes-image
+    - .always
