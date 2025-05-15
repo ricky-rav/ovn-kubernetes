@@ -53,8 +53,8 @@ cicd-2-0:prepare-mr:
       $CI_MERGE_REQUEST_DESCRIPTION
       EOF
     - run_gitops=`awk -v query=run_gitops -v default_value=${run_gitops} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
-    - run_kind_e2e_tests=`awk -v query=run_gitops -v default_value=${run_kind_e2e_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
-    - run_check=`awk -v query=run_gitops -v default_value=${run_check} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
+    - run_kind_e2e_tests=`awk -v query=run_kind_e2e_tests -v default_value=${run_kind_e2e_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
+    - run_check=`awk -v query=run_check -v default_value=${run_check} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     - |
       if [[ ! -z $PRE_DEF_TAG ]] ; then
