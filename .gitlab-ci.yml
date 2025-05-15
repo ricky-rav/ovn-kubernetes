@@ -81,7 +81,8 @@ cicd-2-0:prepare-mr:
   script:
     - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
-    - run_check=`yq -r '.cicd.skip_make_check != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_check=`yq -r '.cicd.skip_all_checks != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_unit_tests=`yq -r '(.cicd.skip_make_check != true) and (.cicd.skip_all_checks != true)' ./cicd-nv-ovn-kubernetes.yaml`
     - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_kind_e2e_tests=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_build_and_sign=true
@@ -93,6 +94,7 @@ cicd-2-0:prepare-mr:
     - run_gitops=`awk -v query=run_gitops -v default_value=${run_gitops} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - run_kind_e2e_tests=`awk -v query=run_kind_e2e_tests -v default_value=${run_kind_e2e_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - run_check=`awk -v query=run_check -v default_value=${run_check} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
+    - run_unit_tests=`awk -v query=run_unit_tests -v default_value=${run_unit_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     # TODO: probably it should be in push pipeline
     - |
@@ -112,6 +114,7 @@ cicd-2-0:prepare-mr:
           ovs_version: ${ovs_version}
           image_tag: ${image_tag}
           run_check: ${run_check}
+          run_unit_tests: ${run_unit_tests}
           run_build_and_sign: ${run_build_and_sign}
           run_gitops: ${run_gitops}
           run_kind_e2e_tests: ${run_kind_e2e_tests}
@@ -163,6 +166,7 @@ cicd-2-0:prepare-fork:
           ovs_version: .not-defined
           image_tag: .not-defined
           run_check: true
+          run_unit_tests: true
           run_build_and_sign: false
           run_gitops: false
           run_kind_e2e_tests: false
@@ -191,10 +195,6 @@ cicd-2-0:prepare-release:
   script:
     - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
-    - run_check=true
-    - run_gitops=true
-    - run_kind_e2e_tests=true
-    - run_build_and_sign=true
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     - promote_helm=`yq -r '.artifacts.promote == "yes"' ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_repo=`yq -r ".artifacts.helm.repo"  ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
@@ -209,10 +209,11 @@ cicd-2-0:prepare-release:
           ovn_version: ${ovn_version}
           ovs_version: ${ovs_version}
           image_tag: ${image_tag}
-          run_check: ${run_check}
-          run_build_and_sign: ${run_build_and_sign}
-          run_gitops: ${run_gitops}
-          run_kind_e2e_tests: ${run_kind_e2e_tests}
+          run_check: true
+          run_unit_tests: true
+          run_build_and_sign: true
+          run_gitops: true
+          run_kind_e2e_tests: true
           run_flow_tests: false
           source_project_name: $CI_PROJECT_NAME
           source_project_path: $CI_PROJECT_PATH
