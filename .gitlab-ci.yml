@@ -29,6 +29,7 @@ include:
 
 variables:
   sdn_ns: "sdn"
+  DISABLE_CICD_2_0: false
 
 # Check that CICD 2.0 pipeline is executed as part of merge request:
 # Either from forked repository to sdn/ovn-kubernetes or
@@ -36,14 +37,14 @@ variables:
 .need-run-cicd-2-0-mr:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && $CI_PIPELINE_SOURCE == "merge_request_event")
 
 # Checks that CICD 2.0 pipeline is executed from forked repostitory
 .need-run-cicd-2-0-forked:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && $CI_PIPELINE_SOURCE == "push"
         && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns)
 
@@ -52,7 +53,7 @@ variables:
 .need-run-cicd-2-0-release:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && $CI_PIPELINE_SOURCE == "push"
         && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns
         && $CI_COMMIT_REF_PROTECTED == "true" )
@@ -62,7 +63,7 @@ variables:
 .need-run-cicd-2-0:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && ( $CI_PIPELINE_SOURCE == "merge_request_event"
           || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns
           || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns && $CI_COMMIT_REF_PROTECTED == "true" ))
