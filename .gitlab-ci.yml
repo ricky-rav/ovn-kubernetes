@@ -2,10 +2,34 @@
 # Dual-pipeline
 #
 
+# This include adds all jobs from CI/CD 1.0 pipeline:
 include:
   - project: 'sdn/sdn-cicd'
     file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
     ref: 'master'
+
+# ================================================================================
+# CI/CD 2.0:
+#
+# Design idea of CI/CD 2.0 pipelines is following:
+# We have one configurable pipeline that is described by two parts:
+# 1. preparation part (see below)
+# 2. cicd/cicd-2-0.yml
+#
+# Preparation part defines configuration for cicd/cicd-2.0.yml.
+# For example it defines what parts of pipeline should be run and what
+# should be skipped.
+#
+# Prepared part is different from context where pipeline is started. Following contexts
+# supported so far:
+# 1. Merge request either from forked or from main repostory
+# 2. Forked repository pipeline
+# 3. Release pipeline
+#
+
+variables:
+  sdn_ns: "sdn"
+  DISABLE_CICD_2_0: false
 
 # Check that CICD 2.0 pipeline is executed as part of merge request:
 # Either from forked repository to sdn/ovn-kubernetes or
@@ -13,32 +37,46 @@ include:
 .need-run-cicd-2-0-mr:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && $CI_PIPELINE_SOURCE == "merge_request_event")
 
 # Checks that CICD 2.0 pipeline is executed from forked repostitory
 .need-run-cicd-2-0-forked:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && $CI_PIPELINE_SOURCE == "push"
-        && $CI_PROJECT_ROOT_NAMESPACE != "sdn")
+        && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns)
+
+# Checks that CICD 2.0 pipeline is executed as push to release (protected)
+# branch on main repository
+.need-run-cicd-2-0-release:
+  rules:
+    - if: >
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
+        && $CI_PIPELINE_SOURCE == "push"
+        && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns
+        && $CI_COMMIT_REF_PROTECTED == "true" )
 
 # Checks that CICD 2.0 need to be run.
 # Limitation is applied: only run supported pipelines.
 .need-run-cicd-2-0:
   rules:
     - if: >
-        (  $RUN_CICD_2_0 == "true"
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && ( $CI_PIPELINE_SOURCE == "merge_request_event"
-          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != "sdn" ))
+          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns
+          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns && $CI_COMMIT_REF_PROTECTED == "true" ))
+
+.cicd-2-0-allow-failure:
+  allow_failure: true
 
 # Prepare data for merge request CI/CD 2.0 pipeline
 cicd-2-0:prepare-mr:
   stage: Init-pipeline
   needs: []
-  allow_failure: true
   extends:
+    - .cicd-2-0-allow-failure
     - .need-run-cicd-2-0-mr
   script:
     - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
@@ -56,6 +94,7 @@ cicd-2-0:prepare-mr:
     - run_kind_e2e_tests=`awk -v query=run_kind_e2e_tests -v default_value=${run_kind_e2e_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - run_check=`awk -v query=run_check -v default_value=${run_check} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    # TODO: probably it should be in push pipeline
     - |
       if [[ ! -z $PRE_DEF_TAG ]] ; then
         echo "Using pre defined tag $PRE_DEF_TAG"
@@ -81,6 +120,8 @@ cicd-2-0:prepare-mr:
           source_project_path: $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH
           source_repo_branch: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
           source_repo_commit_sha: $CI_COMMIT_SHA
+          promote_helm: false
+          promote_helm_branch: .not-defined
           email_message_description: |
               $GITLAB_USER_NAME just built and pushed ovnkube
               CommitID: $CI_COMMIT_SHORT_SHA
@@ -98,6 +139,7 @@ cicd-2-0:prepare-fork:
   stage: Init-pipeline
   needs: []
   extends:
+    - .cicd-2-0-allow-failure
     - .need-run-cicd-2-0-forked
   script:
     - |
@@ -129,6 +171,60 @@ cicd-2-0:prepare-fork:
           source_project_path: .not-defined
           source_repo_branch: .not-defined
           source_repo_commit_sha: .not-defined
+          promote_helm: false
+          promote_helm_branch: .not-defined
+      EOF
+    - cat ./cicd-2-0-trigger.yaml
+  artifacts:
+    paths:
+      - cicd-2-0-trigger.yaml
+
+# Prepare data for merge request CI/CD 2.0 pipeline
+cicd-2-0:prepare-release:
+  stage: Init-pipeline
+  needs: []
+  extends:
+    - .cicd-2-0-allow-failure
+    - .need-run-cicd-2-0-release
+  script:
+    - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
+    - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
+    - run_check=true
+    - run_gitops=true
+    - run_kind_e2e_tests=true
+    - run_build_and_sign=true
+    - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - promote_helm=`yq -r '.artifacts.promote == "yes"' ./cicd-nv-ovn-kubernetes.yaml`
+    - promote_helm_repo=`yq -r ".artifacts.helm.repo"  ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - promote_helm_branch=`yq -r ".artifacts.helm.branch"  ./cicd-nv-ovn-kubernetes.yaml`
+    - promote_helm_values_yaml=`yq -r ".artifacts.helm.values_yaml"  ./cicd-nv-ovn-kubernetes.yaml`
+    - |
+      cat > ./cicd-2-0-trigger.yaml <<EOF
+      include:
+        local: cicd/cicd-2-0.yml
+        inputs:
+          ovn_version: ${ovn_version}
+          ovs_version: ${ovs_version}
+          image_tag: ${image_tag}
+          run_check: ${run_check}
+          run_build_and_sign: ${run_build_and_sign}
+          run_gitops: ${run_gitops}
+          run_kind_e2e_tests: ${run_kind_e2e_tests}
+          run_flow_tests: false
+          source_project_name: $CI_PROJECT_NAME
+          source_project_path: $CI_PROJECT_PATH
+          source_repo_branch: $CI_COMMIT_BRANCH
+          source_repo_commit_sha: $CI_COMMIT_SHA
+          promote_helm: ${promote_helm}
+          promote_helm_repo: ${promote_helm_repo}
+          promote_helm_branch: ${promote_helm_branch}
+          promote_helm_values_yaml: ${promote_helm_values_yaml}
+          promote_helm_dry_run: ${RUN_CICD_1_0:-"false"}
+          email_message_description: |
+              $GITLAB_USER_NAME just built and pushed ovnkube
+              CommitID: $CI_COMMIT_SHORT_SHA
+              Pipeline URL: $CI_PIPELINE_URL
+              Merge request: $CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
@@ -142,11 +238,14 @@ cicd-2-0:prepare-fork:
 cicd-2-0:prepare:
   stage: Init-pipeline
   extends:
+    - .cicd-2-0-allow-failure
     - .need-run-cicd-2-0
   needs:
     - job: cicd-2-0:prepare-fork
       optional: true
     - job: cicd-2-0:prepare-mr
+      optional: true
+    - job: cicd-2-0:prepare-release
       optional: true
   script:
     - cat cicd-2-0-trigger.yaml
@@ -156,8 +255,8 @@ cicd-2-0:prepare:
 
 cicd-2-0:
   stage: .post
-  allow_failure: true
   extends:
+    - .cicd-2-0-allow-failure
     - .need-run-cicd-2-0
   needs:
     - cicd-2-0:prepare
