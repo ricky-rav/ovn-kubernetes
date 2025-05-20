@@ -76,6 +76,15 @@ spec:
       description: yaml file in helm repo
       type: boolean
       default: false
+    latest_tag:
+      description: Name of latest tag for ovnkube-c and ovn-c. This
+        input is only needed if promotion was initiated.
+      type: string
+    tag_latest_dry_run:
+      description: If set to true then pipeline doesn't really
+        do tagging but just print commands that would be executed
+      type: boolean
+      default: true
     email_message_to:
       description: To-field of e-mail
       type: string
@@ -124,6 +133,8 @@ variables:
   promote_helm_branch: $[[ inputs.promote_helm_branch ]]
   promote_helm_values_yaml: $[[ inputs.promote_helm_values_yaml ]]
   promote_helm_dry_run: $[[ inputs.promote_helm_dry_run ]]
+  latest_tag: $[[ inputs.latest_tag ]]
+  tag_latest_dry_run: $[[ inputs.tag_latest_dry_run ]]
 
 stages:
   - setup-builder
@@ -132,6 +143,7 @@ stages:
   - sign
   - test
   - promote
+  - tag-latest
   - notify
 
 include:
@@ -185,6 +197,14 @@ default:
 .if-promote-helm:
   rules:
     - if: $promote_helm == "true"
+
+.if-tag-latest-dry-run:
+  rules:
+    - if: $promote_helm == "true" && $tag_latest_dry_run == "true"
+
+.if-tag-latest:
+  rules:
+    - if: $promote_helm == "true" && $tag_latest_dry_run != "true"
 
 # Send e-mail after image sign
 .if-send-notify-signed:
@@ -599,7 +619,51 @@ promote-helm:
         job: promote-helm:prepare
       - cicd/promote-helm.yml
 
-  
+
+# ================================================================================
+# Latest artifiact tagging
+.tag-latest:
+  stage: tag-latest
+  image: ${builder_image}
+  needs:
+    - promote-helm
+    - sign
+  script:
+    - if [[ -z ${dry_run_value} ]] ; then exit 1 ; fi
+    - |
+      make tag-latest -C cicd/build-image -f multiarch.mk \
+            dry-run=${dry_run_value} \
+            dist=rocky \
+            platforms="arm64 amd64" \
+            image-tag=${image_tag} \
+            registry-tag-path=${container_registry_tag_path} \
+            latest-tag=${latest_tag}
+    - |
+      make tag-latest -C cicd/build-image -f build-and-push.mk \
+            dry-run=${dry_run_value} \
+            dist=ubuntu \
+            platform="arm64" \
+            image-tag=${image_tag} \
+            registry-tag-path=${container_registry_tag_path} \
+            latest-tag=${latest_tag}
+
+tag-latest:dry-run:
+  stage: tag-latest
+  extends:
+    - .if-tag-latest-dry-run
+    - .tag-latest
+    - .tags-amd64
+  variables:
+    dry_run_value: true
+
+tag-latest:
+  stage: tag-latest
+  extends:
+    - .if-tag-latest
+    - .tag-latest
+    - .tags-amd64
+  variables:
+    dry_run_value: false
 
 # ================================================================================
 # Send e-mail to pipeline inititor
