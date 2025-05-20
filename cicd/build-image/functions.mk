@@ -9,16 +9,20 @@
 # Examples:
 #    $(call make-ovn-c-image,$(dist))
 #    $(call make-ovnkube-c-image,$(dist))
+#    $(call make-netprobes-image,$(dist))
 #
 # Historically ubuntu-arm64 were used for DPU (and called ovn-c-arm64) 
 make-ovn-c-image-ubuntu = ovn-c-arm64
 make-ovnkube-c-image-ubuntu = ovnkube-c-arm64
+make-netprobes-image-ubuntu = ovnkube-networkprobe-target-arm64
 
 make-ovn-c-image-rocky  = ovn-c
 make-ovnkube-c-image-rocky = ovnkube-c
+make-netprobes-image-rocky = ovnkube-networkprobe-target
 
 make-ovn-c-image = $(call make-ovn-c-image-$1)
 make-ovnkube-c-image = $(call make-ovnkube-c-image-$1)
+make-netprobes-image = $(call make-netprobes-image-$1)
 
 # ================================================================================
 # Image tag generation

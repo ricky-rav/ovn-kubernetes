@@ -18,10 +18,10 @@
       - dist/images/ovn-kube-util
       - dist/images/ovnkube
       - dist/images/ovnkube-trace
+      - dist/images/ovnkube-networkprobe-target
 
 .ovn-k8s-build-image:
   script:
-    - yum install -y docker make
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
       make -C cicd/build-image \
@@ -34,3 +34,15 @@
            image-tag=${image_tag} \
            artifactory-creds=${JFROG_CREDENTIAL} \
            registry-tag-path=${container_registry_tag_path}
+
+.ovn-k8s-build-netprobes-image:
+  script:
+    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
+    - |
+      make -C cicd/build-image \
+           -f build-and-push-netprobes.mk \
+           platform=${platform} \
+           dist=${dist} \
+           image-tag=${image_tag} \
+           registry-tag-path=${container_registry_tag_path}
+
