@@ -15,6 +15,11 @@ spec:
       description: Tag for OVN kuberentes images that will be produced
          or used during testing (if run_build_and_sign is set to false)
     run_check:
+      description: Run checks (lint, gofmt, build, windows build) before building
+         artifiacts
+      type: boolean
+      default: true
+    run_unit_tests:
       description: Run unit tests before building artifiacts
       type: boolean
       default: true
@@ -109,6 +114,7 @@ variables:
   ovs_version: $[[ inputs.ovs_version ]]
   run_build_and_sign: $[[ inputs.run_build_and_sign ]]
   run_check: $[[ inputs.run_check ]]
+  run_unit_tests: $[[ inputs.run_unit_tests ]]
   run_gitops: $[[ inputs.run_gitops ]]
   force_instance_runners: $[[ inputs.force_instance_runners ]]
   # Promote ovn_version above on success of pipeline
@@ -160,7 +166,10 @@ default:
 # AMD64 builder is used for run check
 .if-setup-builder-rocky-amd64:
   rules:
-    - if: $run_build_and_sign == "true" || $run_check == "true"
+    - if: >
+        (  $run_build_and_sign == "true"
+        || $run_check == "true"
+        || $run_unit_tests == "true" )
 
 .if-build:
   rules:
@@ -186,9 +195,13 @@ default:
   rules:
     - if: $run_gitops == "true"
 
-.if-run-check:
+.if-run-lint:
   rules:
     - if: $run_check == "true"
+
+.if-run-make-and-check:
+  rules:
+    - if: $run_check == "true" || $run_unit_tests == "true"
 
 .if-promote-ovn-on-success:
   rules:
@@ -225,6 +238,7 @@ default:
   rules:
     - if: >
         (  "true" != $run_check
+        && "true" != $run_unit_tests
         && "true" != $run_kind_e2e_tests
         && "true" != $run_build_and_sign
         && "true" != $run_gitops
@@ -259,6 +273,8 @@ default:
         container_registry: ${container_registry}
         container_registry_tag_path: ${container_registry_tag_path}
         force_instance_runners: ${force_instance_runners}
+        run_check: ${run_check}
+        run_unit_tests: ${run_unit_tests}
       include:
         - cicd/runners-tags.yml
       EOF
@@ -317,7 +333,7 @@ setup-builder:ubuntu20.04-arm64:
 make-and-check:rocky8.8-amd64:
   stage: make-and-check
   extends:
-    - .if-run-check
+    - .if-run-make-and-check
   needs:
     - setup-builder:rocky8.8-amd64
   trigger:
@@ -331,7 +347,7 @@ make-lint:
   stage: make-and-check
   extends:
     - .tags-amd64
-    - .if-run-check
+    - .if-run-lint
   image: golangci/golangci-lint:v1.59
   needs: []
   script:

@@ -8,16 +8,20 @@ include:
 default:
   interruptible: true
 
-.always:
+.if-run-check:
   rules:
-    - when: always
+    - if: $run_check == "true"
+
+.if-run-unit-tests:
+  rules:
+    - if: $run_unit_tests == "true"
 
 make-build:amd64:
   stage: make-and-check
   image: ${image}
   extends:
     - .tags-amd64
-    - .always
+    - .if-run-check
   script:
     - make build -C go-controller
 
@@ -26,7 +30,7 @@ make-windows:amd64:
   image: ${image}
   extends:
     - .tags-amd64
-    - .always
+    - .if-run-check
   script:
     - make windows -C go-controller
 
@@ -35,7 +39,7 @@ make-gofmt:amd64:
   image: ${image}
   extends:
     - .tags-amd64
-    - .always
+    - .if-run-check
   script:
     - make gofmt -C go-controller
 
@@ -49,7 +53,7 @@ unit-tests:amd64:
     # in extends. So we cannot define variable with set of tags
     # nor define two base items with different set of tags.
     - .unit-test-tags
-    - .always
+    - .if-run-unit-tests
   parallel: 11
   timeout: 6 minutes
   script:

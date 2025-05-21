@@ -43,6 +43,7 @@ cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
   skip_make_check: false
+  skip_all_checks: false
   skip_flowTests: false
   skip_SDN_tests: false
   SDN_LOCK_lock_on_failure: false
