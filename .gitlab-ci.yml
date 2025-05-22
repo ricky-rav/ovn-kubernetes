@@ -58,6 +58,15 @@ variables:
         && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns
         && $CI_COMMIT_REF_PROTECTED == "true" )
 
+# Check that CICD 2.0 pipeline is executed when triggered from web
+.need-run-cicd-2-0-pre-def-tag:
+  rules:
+    - if: >
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
+        && $CI_PIPELINE_SOURCE == "web"
+        && $PRE_DEF_TAG != null
+        && $PRE_DEF_TAG != "")
+
 # Checks that CICD 2.0 need to be run.
 # Limitation is applied: only run supported pipelines.
 .need-run-cicd-2-0:
@@ -66,7 +75,8 @@ variables:
         (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
         && ( $CI_PIPELINE_SOURCE == "merge_request_event"
           || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns
-          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns && $CI_COMMIT_REF_PROTECTED == "true" ))
+          || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns && $CI_COMMIT_REF_PROTECTED == "true"
+          || $CI_PIPELINE_SOURCE == "web" && $PRE_DEF_TAG != null && $PRE_DEF_TAG != "" ))
 
 .cicd-2-0-allow-failure:
   allow_failure: true
@@ -96,15 +106,6 @@ cicd-2-0:prepare-mr:
     - run_check=`awk -v query=run_check -v default_value=${run_check} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - run_unit_tests=`awk -v query=run_unit_tests -v default_value=${run_unit_tests} -f ./.gitlab/pipeline_customization.awk ./.gitlab/_pipeline_customization.txt`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
-    # TODO: probably it should be in push pipeline
-    - |
-      if [[ ! -z $PRE_DEF_TAG ]] ; then
-        echo "Using pre defined tag $PRE_DEF_TAG"
-        echo "disable unit test checks and build"
-        run_check=false
-        run_build_and_sign=false
-        image_tag=$PRE_DEF_TAG
-      fi
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
@@ -131,7 +132,6 @@ cicd-2-0:prepare-mr:
               CommitID: $CI_COMMIT_SHORT_SHA
               Pipeline URL: $CI_PIPELINE_URL
               Merge request: $CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID
-
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
@@ -236,6 +236,52 @@ cicd-2-0:prepare-release:
     paths:
       - cicd-2-0-trigger.yaml
 
+# Prepare data for web trggered CI/CD 2.0 pipeline with PRE_DEF_TAG
+cicd-2-0:prepare-pre-def-tag:
+  stage: Init-pipeline
+  needs: []
+  extends:
+    - .cicd-2-0-allow-failure
+    - .need-run-cicd-2-0-pre-def-tag
+  script:
+    # Handle pipeline customization via merge request message:
+    - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    # TODO: probably it should be in push pipeline
+    - |
+      if [[ ! -z $PRE_DEF_TAG ]] ; then
+        echo "Using pre defined tag $PRE_DEF_TAG"
+        echo "disable unit test checks and build"
+        run_check=false
+        run_build_and_sign=false
+        image_tag=$PRE_DEF_TAG
+      fi
+    - |
+      cat > ./cicd-2-0-trigger.yaml <<EOF
+      include:
+        local: cicd/cicd-2-0.yml
+        inputs:
+          ovn_version: .not-defined
+          ovs_version: .not-defined
+          image_tag: ${PRE_DEF_TAG}
+          run_check: false
+          run_unit_tests: false
+          run_build_and_sign: false
+          run_gitops: true
+          run_kind_e2e_tests: true
+          run_flow_tests: false
+          source_project_name: $CI_PROJECT_NAME
+          source_project_path: $CI_PROJECT_PATH
+          source_repo_branch: $CI_COMMIT_BRANCH
+          source_repo_commit_sha: $CI_COMMIT_SHA
+          promote_helm: false
+          promote_helm_branch: .not-defined
+          latest_tag: .not-defined
+      EOF
+    - cat ./cicd-2-0-trigger.yaml
+  artifacts:
+    paths:
+      - cicd-2-0-trigger.yaml
+
 # Collect artifacts from prepare phase to pass
 # it to triggered pipeline. Prepare phase can be one
 # but in this case it should contain all options together
@@ -251,6 +297,8 @@ cicd-2-0:prepare:
     - job: cicd-2-0:prepare-mr
       optional: true
     - job: cicd-2-0:prepare-release
+      optional: true
+    - job: cicd-2-0:prepare-pre-def-tag
       optional: true
   script:
     - cat cicd-2-0-trigger.yaml
