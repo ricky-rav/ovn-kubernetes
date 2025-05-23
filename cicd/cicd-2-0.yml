@@ -57,6 +57,17 @@ spec:
     source_repo_commit_sha:
       description: Commit sha on repo that triggered pipeline (needed for kind_e2e)
       type: string
+    kind_e2e_mode:
+      description: Mode of the kind e2e test. Either MERGE or PUSH.
+      type: string
+      options:
+        - MERGE
+        - PUSH
+      default: PUSH
+    kind_e2e_merge_request_id:
+      description: Gitlab merge request id for MERGE mode.
+      type: number
+      default: 0
     sdn_cicd_branch:
       type: string
       default: master
@@ -129,6 +140,8 @@ variables:
   source_project_name: $[[ inputs.source_project_name ]]
   source_repo_branch: $[[ inputs.source_repo_branch ]]
   source_repo_commit_sha: $[[ inputs.source_repo_commit_sha ]]
+  kind_e2e_mode: $[[ inputs.kind_e2e_mode ]]
+  kind_e2e_merge_request_id: $[[ inputs.kind_e2e_merge_request_id ]]
   sdn_cicd_branch: $[[ inputs.sdn_cicd_branch ]]
   container_registry: nvcr.io
   container_registry_path: nv-ngn/sdn
@@ -531,6 +544,8 @@ prepare-sdn-cicd:
         source_project_name: $source_project_name
         source_project_path: $source_project_path
         source_repo_branch: $source_repo_branch
+        kind_e2e_mode: $kind_e2e_mode
+        kind_e2e_merge_request_id: $kind_e2e_merge_request_id
         ovn_kubernetes_image_tag: $image_tag
         image_tag: $image_tag
         source_repo_commit_sha: $source_repo_commit_sha

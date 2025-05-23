@@ -124,6 +124,8 @@ cicd-2-0:prepare-mr:
           source_project_path: $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH
           source_repo_branch: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
           source_repo_commit_sha: $CI_COMMIT_SHA
+          kind_e2e_mode: MERGE
+          kind_e2e_merge_request_id: $CI_MERGE_REQUEST_IID
           promote_helm: false
           promote_helm_branch: .not-defined
           latest_tag: .not-defined
