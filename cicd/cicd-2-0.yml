@@ -92,6 +92,18 @@ spec:
       description: yaml file in helm repo
       type: boolean
       default: false
+    promote_helm_need_merge:
+      description: helm promotion has associated
+        merge request to the helm repository
+      type: boolean
+      default: false
+    promote_helm_need_merge_id:
+      description: If helm promotion has associated
+        merge request to the helm repository then
+        this input contains id of the merge request
+        in ovn helm repository.
+      type: number
+      default: 0
     latest_tag:
       description: Name of latest tag for ovnkube-c and ovn-c. This
         input is only needed if promotion was initiated.
@@ -130,12 +142,9 @@ variables:
   force_instance_runners: $[[ inputs.force_instance_runners ]]
   # Promote ovn_version above on success of pipeline
   promote_ovn_on_success: false
-  source_project_name: $CI_PROJECT_NAME
   image_tag: $[[ inputs.image_tag ]]
   run_kind_e2e_tests: $[[ inputs.run_kind_e2e_tests ]]
   run_flow_tests: $[[ inputs.run_flow_tests ]]
-  # Promote ovn_version above on success of pipeline
-  promote_ovn_on_success: false
   source_project_path: $[[ inputs.source_project_path ]]
   source_project_name: $[[ inputs.source_project_name ]]
   source_repo_branch: $[[ inputs.source_repo_branch ]]
@@ -152,6 +161,8 @@ variables:
   promote_helm_branch: $[[ inputs.promote_helm_branch ]]
   promote_helm_values_yaml: $[[ inputs.promote_helm_values_yaml ]]
   promote_helm_dry_run: $[[ inputs.promote_helm_dry_run ]]
+  promote_helm_need_merge: $[[ inputs.promote_helm_need_merge ]]
+  promote_helm_need_merge_id: $[[ inputs.promote_helm_need_merge_id ]]
   latest_tag: $[[ inputs.latest_tag ]]
   tag_latest_dry_run: $[[ inputs.tag_latest_dry_run ]]
 
@@ -654,6 +665,8 @@ promote-helm:prepare:
         promote_helm_branch: $promote_helm_branch
         promote_helm_values_yaml: $promote_helm_values_yaml
         promote_helm_dry_run: $promote_helm_dry_run
+        promote_helm_need_merge: $promote_helm_need_merge
+        promote_helm_need_merge_id: $promote_helm_need_merge_id
       EOF
     - cat cicd/promote-helm-run-vars.yml
   artifacts:

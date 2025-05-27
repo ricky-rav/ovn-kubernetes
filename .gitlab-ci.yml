@@ -202,7 +202,20 @@ cicd-2-0:prepare-release:
     - promote_helm_repo=`yq -r ".artifacts.helm.repo"  ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - promote_helm_branch=`yq -r ".artifacts.helm.branch"  ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_values_yaml=`yq -r ".artifacts.helm.values_yaml"  ./cicd-nv-ovn-kubernetes.yaml`
+    - promote_helm_need_merge=false
+    - promote_helm_need_merge_id=.not-defined
     - latest_tag=`yq -r ".artifacts.latestImageNameTag" ./cicd-nv-ovn-kubernetes.yaml`
+    - git log -1 --pretty=%B
+    - msg_merge_id=$(git log -1 --pretty=%B | grep "See merge request" | awk -F! '{print $2}')
+    - 'echo "Merge request id: ${msg_merge_id}"'
+    - |
+      if [[ ! -z $msg_merge_id ]] ; then
+        helm_mr_id=$(curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$msg_merge_id" | jq '.labels' | grep HELM_MR | tr -d '"' | awk -F_ '{print $NF}')
+        if [[ ! -z $helm_mr_id ]] ; then
+          promote_helm_need_merge=true
+          promote_helm_need_merge_id=${helm_mr_id}
+        fi
+      fi
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
@@ -226,12 +239,13 @@ cicd-2-0:prepare-release:
           promote_helm_branch: ${promote_helm_branch}
           promote_helm_values_yaml: ${promote_helm_values_yaml}
           promote_helm_dry_run: ${RUN_CICD_1_0:-"false"}
+          promote_helm_need_merge: ${promote_helm_need_merge}
+          promote_helm_need_merge_id: ${promote_helm_need_merge_id}
           latest_tag: ${latest_tag}
           email_message_description: |
               $GITLAB_USER_NAME just built and pushed ovnkube
               CommitID: $CI_COMMIT_SHORT_SHA
               Pipeline URL: $CI_PIPELINE_URL
-              Merge request: $CI_MERGE_REQUEST_PROJECT_URL/-/merge_requests/$CI_MERGE_REQUEST_IID
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
