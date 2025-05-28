@@ -203,7 +203,7 @@ cicd-2-0:prepare-release:
     - promote_helm_branch=`yq -r ".artifacts.helm.branch"  ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_values_yaml=`yq -r ".artifacts.helm.values_yaml"  ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_need_merge=false
-    - promote_helm_need_merge_id=.not-defined
+    - promote_helm_need_merge_id=0
     - latest_tag=`yq -r ".artifacts.latestImageNameTag" ./cicd-nv-ovn-kubernetes.yaml`
     - git log -1 --pretty=%B
     - |
