@@ -206,12 +206,11 @@ cicd-2-0:prepare-release:
     - promote_helm_need_merge_id=.not-defined
     - latest_tag=`yq -r ".artifacts.latestImageNameTag" ./cicd-nv-ovn-kubernetes.yaml`
     - git log -1 --pretty=%B
-    - msg_merge_id=$(git log -1 --pretty=%B | grep "See merge request" | awk -F! '{print $2}')
-    - 'echo "Merge request id: ${msg_merge_id}"'
     - |
-      if [[ ! -z $msg_merge_id ]] ; then
-        helm_mr_id=$(curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$msg_merge_id" | jq '.labels' | grep HELM_MR | tr -d '"' | awk -F_ '{print $NF}')
-        if [[ ! -z $helm_mr_id ]] ; then
+      if msg_merge_id=$(git log -1 --pretty=%B | grep "See merge request" | awk -F! '{print $2}') ; then
+        echo "Merge request id: ${msg_merge_id}"
+        if helm_mr_id=$(curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$msg_merge_id" | jq '.labels' | grep HELM_MR | tr -d '"' | awk -F_ '{print $NF}') ; then
+          echo "Helm merge request id: ${helm_mr_id}"
           promote_helm_need_merge=true
           promote_helm_need_merge_id=${helm_mr_id}
         fi
