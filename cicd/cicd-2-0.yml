@@ -140,8 +140,6 @@ variables:
   run_unit_tests: $[[ inputs.run_unit_tests ]]
   run_gitops: $[[ inputs.run_gitops ]]
   force_instance_runners: $[[ inputs.force_instance_runners ]]
-  # Promote ovn_version above on success of pipeline
-  promote_ovn_on_success: false
   image_tag: $[[ inputs.image_tag ]]
   run_kind_e2e_tests: $[[ inputs.run_kind_e2e_tests ]]
   run_flow_tests: $[[ inputs.run_flow_tests ]]
@@ -226,10 +224,6 @@ default:
 .if-run-make-and-check:
   rules:
     - if: $run_check == "true" || $run_unit_tests == "true"
-
-.if-promote-ovn-on-success:
-  rules:
-    - if: $promote_ovn_on_success == "true"
 
 .if-promote-helm:
   rules:
@@ -615,28 +609,6 @@ run-gitops:
 # ================================================================================
 # Promotion
 #
-promote-ovn:
-  stage: promote
-  image: ${builder_image}
-  extends:
-    - .tags-amd64
-    - .if-promote-ovn-on-success
-  script:
-    - git config --global user.email "$GITLAB_USER_EMAIL"
-    - git config --global user.name "$GITLAB_USER_NAME"
-    - git checkout $CI_COMMIT_BRANCH
-    - |
-      sed -i "s/^\\( *ovn_version: *\\)[.0-9a-zA-Z]*/\\1$ovn_version/" ./cicd/cicd-2-0.yml
-    - git diff
-    - |
-      if [ -n "$(git status --porcelain)" ]; then
-         git add ./.gitlab-ci.yml
-         git commit -m "Update ovn_version to $ovn_version [ci skip]"
-         git push
-      else
-         echo "Version is not changed ($ovn_version)"
-      fi
-
 promote-helm:prepare:
   stage: promote
   extends:

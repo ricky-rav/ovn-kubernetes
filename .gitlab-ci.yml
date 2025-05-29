@@ -88,6 +88,15 @@ variables:
           || $CI_PIPELINE_SOURCE == "web" && $PRE_DEF_TAG != null && $PRE_DEF_TAG != ""
           || $CI_PIPELINE_SOURCE == "pipeline" && $ovn_kubernetes_action == "check" ))
 
+# Promote ovn version by modifying hint file.
+.need-promote-ovn:
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "pipeline"
+        && $ovn_kubernetes_action == "promote"
+        && $ovn_version != null
+        && $promote_dry_run != null
+
 .cicd-2-0-allow-failure:
   allow_failure: true
 
@@ -402,9 +411,31 @@ cicd-2-0:
       - artifact: cicd-2-0-trigger.yaml
         job: cicd-2-0:prepare
 
-inspect-env-vars:
+cicd-2-0:promote-ovn:
   stage: Init-pipeline
-  rules:
-    - when: always
+  extends:
+    - .need-promote-ovn
   script:
-    - env
+    - ovn_version=${ovn_version?OVN}
+    - ovn_kubernetes_cicd_yaml=./cicd-nv-ovn-kubernetes.yaml
+    - git config --global user.email "$GITLAB_USER_EMAIL"
+    - git config --global user.name "$GITLAB_USER_NAME"
+    - git checkout $CI_COMMIT_BRANCH
+    - echo yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
+    - yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
+    - |
+      if [ -n "$(git status --porcelain)" ]; then
+         git diff
+         git add $ovn_kubernetes_cicd_yaml
+         git commit -m "$GITLAB_USER_NAME commit by SDN CICD. New ovn version: $ovn_version"
+         # if this push fails because of 403 then you probably need to
+         # give permissions to the job to push to repository:
+         # Settings > Job token permissions > Allow Git push to the repository
+         if [ $promote_dry_run != "true" ] ; then
+            git push
+         else
+            echo "DRY RUN: git push"
+         fi
+      else
+         echo "Nothing has changed"
+      fi
