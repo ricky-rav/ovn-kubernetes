@@ -67,6 +67,15 @@ variables:
         && $PRE_DEF_TAG != null
         && $PRE_DEF_TAG != "")
 
+# Run check of ovn-k8s triggered by upstream pipelines like
+# ovn-nv or ovs-nv.
+.need-run-cicd-2-0-ovn-k8s-check:
+  rules:
+    - if: >
+        (  $RUN_CICD_2_0 == "true" && $DISABLE_CICD_2_0 != "true"
+        && $CI_PIPELINE_SOURCE == "pipeline"
+        && $ovn_kubernetes_action == "check" )
+
 # Checks that CICD 2.0 need to be run.
 # Limitation is applied: only run supported pipelines.
 .need-run-cicd-2-0:
@@ -76,7 +85,17 @@ variables:
         && ( $CI_PIPELINE_SOURCE == "merge_request_event"
           || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE != $sdn_ns
           || $CI_PIPELINE_SOURCE == "push" && $CI_PROJECT_ROOT_NAMESPACE == $sdn_ns && $CI_COMMIT_REF_PROTECTED == "true"
-          || $CI_PIPELINE_SOURCE == "web" && $PRE_DEF_TAG != null && $PRE_DEF_TAG != "" ))
+          || $CI_PIPELINE_SOURCE == "web" && $PRE_DEF_TAG != null && $PRE_DEF_TAG != ""
+          || $CI_PIPELINE_SOURCE == "pipeline" && $ovn_kubernetes_action == "check" ))
+
+# Promote ovn version by modifying hint file.
+.need-promote-ovn:
+  rules:
+    - if: >
+        $CI_PIPELINE_SOURCE == "pipeline"
+        && $ovn_kubernetes_action == "promote"
+        && $ovn_version != null
+        && $promote_dry_run != null
 
 .cicd-2-0-allow-failure:
   allow_failure: true
@@ -297,6 +316,62 @@ cicd-2-0:prepare-pre-def-tag:
     paths:
       - cicd-2-0-trigger.yaml
 
+# Prepare data for upstream triggered check pipelines
+cicd-2-0:prepare-check:
+  stage: Init-pipeline
+  needs: []
+  extends:
+    - .cicd-2-0-allow-failure
+    - .need-run-cicd-2-0-ovn-k8s-check
+  script:
+    # Get default ovn / ovs from cicd-nv-ovn-kubernetes.yaml
+    - ovn_version=${ovn_version:-`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
+    - ovs_version=${ovs_version:-`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
+    - run_gitops=${run_gitops:-true}
+    - run_check=${run_check:-true}
+    - run_unit_tests=${run_unit_tests:-true}
+    - run_kind_e2e_tests=${run_kind_e2e_tests:-true}
+    - run_flow_tests=${run_flow_tests:-false}
+    - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - |
+      if [[ $run_kind_e2e_tests == "true" || $run_flow_tests == "true" ]] ; then
+          source_project_name=${source_project_name:?"source_project_name is required"}
+          source_project_path=${source_project_path:?"source_project_path is required"}
+          source_repo_branch=${source_repo_branch:?"source_project_branch is required"}
+          source_repo_commit_sha=${source_repo_commit_sha:?"source_project_sha is required"}
+      else
+          source_project_name=${source_project_name:-".not-defined"}
+          source_project_path=${source_project_path:-".not-defined"}
+          source_repo_branch=${source_repo_branch:-".not-defined"}
+          source_repo_commit_sha=${source_repo_commit_sha:-".not-defined"}
+      fi
+    - |
+      cat > ./cicd-2-0-trigger.yaml <<EOF
+      include:
+        local: cicd/cicd-2-0.yml
+        inputs:
+          ovn_version: ${ovn_version}
+          ovs_version: ${ovs_version}
+          image_tag: ${image_tag}
+          run_check: ${run_check}
+          run_unit_tests: ${run_unit_tests}
+          run_build_and_sign: true
+          run_gitops: ${run_gitops}
+          run_kind_e2e_tests: ${run_kind_e2e_tests}
+          run_flow_tests: ${run_flow_tests}
+          source_project_name: ${source_project_name}
+          source_project_path: ${source_project_path}
+          source_repo_branch: ${source_repo_branch}
+          source_repo_commit_sha: ${source_repo_commit_sha}
+          promote_helm: false
+          promote_helm_branch: .not-defined
+          latest_tag: .not-defined
+      EOF
+    - cat ./cicd-2-0-trigger.yaml
+  artifacts:
+    paths:
+      - cicd-2-0-trigger.yaml
+
 # Collect artifacts from prepare phase to pass
 # it to triggered pipeline. Prepare phase can be one
 # but in this case it should contain all options together
@@ -314,6 +389,8 @@ cicd-2-0:prepare:
     - job: cicd-2-0:prepare-release
       optional: true
     - job: cicd-2-0:prepare-pre-def-tag
+      optional: true
+    - job: cicd-2-0:prepare-check
       optional: true
   script:
     - cat cicd-2-0-trigger.yaml
@@ -333,3 +410,32 @@ cicd-2-0:
     include:
       - artifact: cicd-2-0-trigger.yaml
         job: cicd-2-0:prepare
+
+cicd-2-0:promote-ovn:
+  stage: Init-pipeline
+  extends:
+    - .need-promote-ovn
+  script:
+    - ovn_version=${ovn_version?OVN}
+    - ovn_kubernetes_cicd_yaml=./cicd-nv-ovn-kubernetes.yaml
+    - git config --global user.email "$GITLAB_USER_EMAIL"
+    - git config --global user.name "$GITLAB_USER_NAME"
+    - git checkout $CI_COMMIT_BRANCH
+    - echo yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
+    - yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
+    - |
+      if [ -n "$(git status --porcelain)" ]; then
+         git diff
+         git add $ovn_kubernetes_cicd_yaml
+         git commit -m "$GITLAB_USER_NAME commit by SDN CICD. New ovn version: $ovn_version"
+         # if this push fails because of 403 then you probably need to
+         # give permissions to the job to push to repository:
+         # Settings > Job token permissions > Allow Git push to the repository
+         if [ $promote_dry_run != "true" ] ; then
+            git push
+         else
+            echo "DRY RUN: git push"
+         fi
+      else
+         echo "Nothing has changed"
+      fi
