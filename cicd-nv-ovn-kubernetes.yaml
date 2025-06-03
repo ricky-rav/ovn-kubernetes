@@ -42,11 +42,23 @@ test:
 cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
+
   skip_make_check: false
   skip_all_checks: false
   skip_flowTests: false
   skip_SDN_tests: false
-  SDN_LOCK_lock_on_failure: false
+
+  # Set to true for ovn-ic. Default false
+  is_ovn_ic: false
+
+  # CICD Rigs are organized in pools. We currently have OVN-K8S-VALIDATION-RIGS, CICD-OVN-IC-RIGS and OVN-UPSTREAM-VALIDATION-RIGS
+  # Ask for a rig pool. Default empty means cicd choose for you.
+  cicd_rig_pool: ""
+  # Ask for a specific rig within a specific pool. Default empy means cicd choose for you.
+  cicd_rig: ""
+
+
+
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
