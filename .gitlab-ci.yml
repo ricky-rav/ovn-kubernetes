@@ -138,11 +138,10 @@ cicd-2-0:prepare-mr:
           run_build_and_sign: ${run_build_and_sign}
           run_gitops: ${run_gitops}
           run_kind_e2e_tests: ${run_kind_e2e_tests}
-          run_flow_tests: false
-          source_project_name: $CI_PROJECT_NAME
-          source_project_path: $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH
-          source_repo_branch: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-          source_repo_commit_sha: $CI_COMMIT_SHA
+          kind_e2e_project_name: $CI_PROJECT_NAME
+          kind_e2e_project_path: $CI_PROJECT_PATH
+          kind_e2e_repo_branch: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+          kind_e2e_repo_commit_sha: $CI_COMMIT_SHA
           kind_e2e_mode: MERGE
           kind_e2e_merge_request_id: $CI_MERGE_REQUEST_IID
           promote_helm: false
@@ -191,12 +190,11 @@ cicd-2-0:prepare-fork:
           run_build_and_sign: false
           run_gitops: false
           run_kind_e2e_tests: false
-          run_flow_tests: false
           force_instance_runners: true
-          source_project_name: .not-defined
-          source_project_path: .not-defined
-          source_repo_branch: .not-defined
-          source_repo_commit_sha: .not-defined
+          kind_e2e_project_name: .not-defined
+          kind_e2e_project_path: .not-defined
+          kind_e2e_repo_branch: .not-defined
+          kind_e2e_repo_commit_sha: .not-defined
           promote_helm: false
           promote_helm_branch: .not-defined
           latest_tag: .not-defined
@@ -247,11 +245,10 @@ cicd-2-0:prepare-release:
           run_build_and_sign: true
           run_gitops: true
           run_kind_e2e_tests: true
-          run_flow_tests: false
-          source_project_name: $CI_PROJECT_NAME
-          source_project_path: $CI_PROJECT_PATH
-          source_repo_branch: $CI_COMMIT_BRANCH
-          source_repo_commit_sha: $CI_COMMIT_SHA
+          kind_e2e_project_name: $CI_PROJECT_NAME
+          kind_e2e_project_path: $CI_PROJECT_PATH
+          kind_e2e_repo_branch: $CI_COMMIT_BRANCH
+          kind_e2e_repo_commit_sha: $CI_COMMIT_SHA
           promote_helm: ${promote_helm}
           promote_helm_repo: ${promote_helm_repo}
           promote_helm_branch: ${promote_helm_branch}
@@ -302,11 +299,10 @@ cicd-2-0:prepare-pre-def-tag:
           run_build_and_sign: false
           run_gitops: true
           run_kind_e2e_tests: true
-          run_flow_tests: false
-          source_project_name: $CI_PROJECT_NAME
-          source_project_path: $CI_PROJECT_PATH
-          source_repo_branch: $CI_COMMIT_BRANCH
-          source_repo_commit_sha: $CI_COMMIT_SHA
+          kind_e2e_project_name: $CI_PROJECT_NAME
+          kind_e2e_project_path: $CI_PROJECT_PATH
+          kind_e2e_repo_branch: $CI_COMMIT_BRANCH
+          kind_e2e_repo_commit_sha: $CI_COMMIT_SHA
           promote_helm: false
           promote_helm_branch: .not-defined
           latest_tag: .not-defined
@@ -331,19 +327,18 @@ cicd-2-0:prepare-check:
     - run_check=${run_check:-true}
     - run_unit_tests=${run_unit_tests:-true}
     - run_kind_e2e_tests=${run_kind_e2e_tests:-true}
-    - run_flow_tests=${run_flow_tests:-false}
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
     - |
-      if [[ $run_kind_e2e_tests == "true" || $run_flow_tests == "true" ]] ; then
-          source_project_name=${source_project_name:?"source_project_name is required"}
-          source_project_path=${source_project_path:?"source_project_path is required"}
-          source_repo_branch=${source_repo_branch:?"source_project_branch is required"}
-          source_repo_commit_sha=${source_repo_commit_sha:?"source_project_sha is required"}
+      if [[ $run_kind_e2e_tests == "true" ]] ; then
+          kind_e2e_project_name=${kind_e2e_project_name:?"kind_e2e_project_name is required"}
+          kind_e2e_project_path=${kind_e2e_project_path:?"kind_e2e_project_path is required"}
+          kind_e2e_repo_branch=${kind_e2e_repo_branch:?"kind_e2e_project_branch is required"}
+          kind_e2e_repo_commit_sha=${kind_e2e_repo_commit_sha:?"kind_e2e_project_sha is required"}
       else
-          source_project_name=${source_project_name:-".not-defined"}
-          source_project_path=${source_project_path:-".not-defined"}
-          source_repo_branch=${source_repo_branch:-".not-defined"}
-          source_repo_commit_sha=${source_repo_commit_sha:-".not-defined"}
+          kind_e2e_project_name=${kind_e2e_project_name:-".not-defined"}
+          kind_e2e_project_path=${kind_e2e_project_path:-".not-defined"}
+          kind_e2e_repo_branch=${kind_e2e_repo_branch:-".not-defined"}
+          kind_e2e_repo_commit_sha=${kind_e2e_repo_commit_sha:-".not-defined"}
       fi
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
@@ -358,11 +353,10 @@ cicd-2-0:prepare-check:
           run_build_and_sign: true
           run_gitops: ${run_gitops}
           run_kind_e2e_tests: ${run_kind_e2e_tests}
-          run_flow_tests: ${run_flow_tests}
-          source_project_name: ${source_project_name}
-          source_project_path: ${source_project_path}
-          source_repo_branch: ${source_repo_branch}
-          source_repo_commit_sha: ${source_repo_commit_sha}
+          kind_e2e_project_name: ${kind_e2e_project_name}
+          kind_e2e_project_path: ${kind_e2e_project_path}
+          kind_e2e_repo_branch: ${kind_e2e_repo_branch}
+          kind_e2e_repo_commit_sha: ${kind_e2e_repo_commit_sha}
           promote_helm: false
           promote_helm_branch: .not-defined
           latest_tag: .not-defined
