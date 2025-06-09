@@ -24,7 +24,7 @@
   script:
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
-      make -C cicd/build-image \
+      make -C .gitlab/build-image \
            -f build-and-push.mk \
            k8s-version=${k8s_version} \
            ovn-version=${ovn_version} \
@@ -39,7 +39,7 @@
   script:
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
-      make -C cicd/build-image \
+      make -C .gitlab/build-image \
            -f build-and-push-netprobes.mk \
            platform=${platform} \
            dist=${dist} \

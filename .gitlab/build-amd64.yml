@@ -4,7 +4,7 @@ stages:
   - image
 
 include:
-  - cicd/build-common.yml
+  - .gitlab/build-common.yml
 
 default:
   interruptible: true
