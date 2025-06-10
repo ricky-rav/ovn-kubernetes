@@ -14,9 +14,9 @@ include:
 # Design idea of CI/CD 2.0 pipelines is following:
 # We have one configurable pipeline that is described by two parts:
 # 1. preparation part (see below)
-# 2. cicd/cicd-2-0.yml
+# 2. .gitlab/cicd-2-0.yml
 #
-# Preparation part defines configuration for cicd/cicd-2.0.yml.
+# Preparation part defines configuration for .gitlab/cicd-2.0.yml.
 # For example it defines what parts of pipeline should be run and what
 # should be skipped.
 #
@@ -128,7 +128,7 @@ cicd-2-0:prepare-mr:
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
-        local: cicd/cicd-2-0.yml
+        local: .gitlab/cicd-2-0.yml
         inputs:
           ovn_version: ${ovn_version}
           ovs_version: ${ovs_version}
@@ -181,7 +181,7 @@ cicd-2-0:prepare-fork:
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
-        local: cicd/cicd-2-0.yml
+        local: .gitlab/cicd-2-0.yml
         inputs:
           ovn_version: .not-defined
           ovs_version: .not-defined
@@ -237,7 +237,7 @@ cicd-2-0:prepare-release:
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
-        local: cicd/cicd-2-0.yml
+        local: .gitlab/cicd-2-0.yml
         inputs:
           ovn_version: ${ovn_version}
           ovs_version: ${ovs_version}
@@ -292,7 +292,7 @@ cicd-2-0:prepare-pre-def-tag:
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
-        local: cicd/cicd-2-0.yml
+        local: .gitlab/cicd-2-0.yml
         inputs:
           ovn_version: .not-defined
           ovs_version: .not-defined
@@ -348,7 +348,7 @@ cicd-2-0:prepare-check:
     - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
-        local: cicd/cicd-2-0.yml
+        local: .gitlab/cicd-2-0.yml
         inputs:
           ovn_version: ${ovn_version}
           ovs_version: ${ovs_version}

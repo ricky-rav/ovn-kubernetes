@@ -3,7 +3,7 @@ stages:
   - make-and-check
 
 include:
-  - cicd/runners-tags.yml
+  - .gitlab/runners-tags.yml
 
 default:
   interruptible: true
@@ -58,7 +58,7 @@ unit-tests:amd64:
   timeout: 6 minutes
   script:
     - mkdir _build
-    - make -C cicd/unit-tests build-dir=$(pwd)/_build controller-dir=$(pwd)/go-controller group-no=$CI_NODE_INDEX groups-total=$CI_NODE_TOTAL
+    - make -C .gitlab/unit-tests build-dir=$(pwd)/_build controller-dir=$(pwd)/go-controller group-no=$CI_NODE_INDEX groups-total=$CI_NODE_TOTAL
   artifacts:
     paths:
       - '_build/*.log.gz'

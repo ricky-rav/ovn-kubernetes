@@ -175,8 +175,8 @@ stages:
   - notify
 
 include:
-  - cicd/runners-tags.yml
-  - cicd/image-tag.yml
+  - .gitlab/runners-tags.yml
+  - .gitlab/image-tag.yml
 
 default:
   interruptible: true
@@ -274,8 +274,8 @@ default:
   image: ${builder_image}
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
-    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C cicd/containers
-    - image_current_tag=`cat cicd/containers/_registry/current-tag`
+    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C .gitlab/containers
+    - image_current_tag=`cat .gitlab/containers/_registry/current-tag`
     - |
       cat > ./builder-image.yaml <<EOF
       variables:
@@ -294,7 +294,7 @@ default:
         run_check: ${run_check}
         run_unit_tests: ${run_unit_tests}
       include:
-        - cicd/runners-tags.yml
+        - .gitlab/runners-tags.yml
       EOF
     - |
       if [[ $force_instance_runners == true ]] ; then cat >> ./builder-image.yaml <<EOF
@@ -359,7 +359,7 @@ make-and-check:rocky8.8-amd64:
     include:
       - artifact: builder-image.yaml
         job: setup-builder:rocky8.8-amd64
-      - cicd/make-and-check-amd64.yml
+      - .gitlab/make-and-check-amd64.yml
 
 make-lint:
   stage: make-and-check
@@ -385,7 +385,7 @@ build:rocky8.8-amd64:
     include:
       - artifact: builder-image.yaml
         job: setup-builder:rocky8.8-amd64
-      - cicd/build-amd64.yml
+      - .gitlab/build-amd64.yml
 
 build:rocky8.8-arm64:
   stage: build
@@ -398,7 +398,7 @@ build:rocky8.8-arm64:
     include:
       - artifact: builder-image.yaml
         job: setup-builder:rocky8.8-arm64
-      - cicd/build-arm64.yml
+      - .gitlab/build-arm64.yml
 
 build:ubuntu20.04-arm64:
   stage: build
@@ -411,7 +411,7 @@ build:ubuntu20.04-arm64:
     include:
       - artifact: builder-image.yaml
         job: setup-builder:ubuntu20.04-arm64
-      - cicd/build-arm64.yml
+      - .gitlab/build-arm64.yml
 
 # ================================================================================
 # Build multiarch image:
@@ -428,7 +428,7 @@ build:rocky8.8-multiarch:
   script:
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
-      make -C cicd/build-image -f multiarch.mk \
+      make -C .gitlab/build-image -f multiarch.mk \
             dist=rocky \
             platforms="arm64 amd64" \
             image-tag=${image_tag} \
@@ -446,7 +446,7 @@ build-netprobes:rocky8.8-multiarch:
   script:
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
-      make -C cicd/build-image -f multiarch-netprobes.mk \
+      make -C .gitlab/build-image -f multiarch-netprobes.mk \
             dist=rocky \
             platforms="arm64 amd64" \
             image-tag=${image_tag} \
@@ -454,7 +454,7 @@ build-netprobes:rocky8.8-multiarch:
 
 # ================================================================================
 # Sign images
-# TODO: image names must be get from make -C cicd/build-image ...
+# TODO: image names must be get from make -C .gitlab/build-image ...
 .sign:
   image: ${builder_image}
   extends:
@@ -465,13 +465,13 @@ build-netprobes:rocky8.8-multiarch:
     - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - cosign login -u \$oauthtoken -p ${NVCR_PASS} ${container_registry}
     - sign_args="nvsec-client-id=${STARFLEET_USER} nvsec-client-secret=${STARFLEET_PASS} output=image.tag"
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c:${image_tag}
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c:${image_tag}
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target:${image_tag}
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c-arm64:${image_tag}
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c-arm64:${image_tag}
-    - make -C cicd/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target-arm64:${image_tag}
-    - cp cicd/tools/image-sign/image.tag .
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c:${image_tag}
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c:${image_tag}
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target:${image_tag}
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c-arm64:${image_tag}
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c-arm64:${image_tag}
+    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target-arm64:${image_tag}
+    - cp .gitlab/tools/image-sign/image.tag .
   artifacts:
     paths:
       - image.tag
@@ -544,7 +544,7 @@ prepare-sdn-cicd:
     - .if-sdn-cicd-test
   script:
     - |
-      cat > ./cicd/sdn-cicd-vars.yml <<EOF
+      cat > ./.gitlab/sdn-cicd-vars.yml <<EOF
       variables:
         source_project_name: $source_project_name
         source_project_path: $source_project_path
@@ -558,10 +558,10 @@ prepare-sdn-cicd:
         run_kind_e2e_tests: $run_kind_e2e_tests
         run_flow_tests: $run_flow_tests
       EOF
-    - cat cicd/sdn-cicd-vars.yml
+    - cat .gitlab/sdn-cicd-vars.yml
   artifacts:
     paths:
-      - cicd/sdn-cicd-vars.yml
+      - .gitlab/sdn-cicd-vars.yml
 
 sdn-cicd:
   stage: test
@@ -572,9 +572,9 @@ sdn-cicd:
   trigger:
     strategy: depend
     include:
-      - artifact: cicd/sdn-cicd-vars.yml
+      - artifact: .gitlab/sdn-cicd-vars.yml
         job: prepare-sdn-cicd
-      - cicd/sdn-cicd-run.yml
+      - .gitlab/sdn-cicd-run.yml
 
 prepare-gitops-run:
   stage: test
@@ -583,15 +583,15 @@ prepare-gitops-run:
     - .if-run-gitops
   script:
     - |
-      cat > ./cicd/gitops-run-vars.yml <<EOF
+      cat > ./.gitlab/gitops-run-vars.yml <<EOF
       variables:
         sdn_gitops_branch: $sdn_gitops_branch
         OVN_KUBERNETES_IMAGE_TAG: $image_tag
       EOF
-    - cat cicd/gitops-run-vars.yml
+    - cat .gitlab/gitops-run-vars.yml
   artifacts:
     paths:
-      - cicd/gitops-run-vars.yml
+      - .gitlab/gitops-run-vars.yml
 
 run-gitops:
   stage: test
@@ -602,9 +602,9 @@ run-gitops:
   trigger:
     strategy: depend
     include:
-      - artifact: cicd/gitops-run-vars.yml
+      - artifact: .gitlab/gitops-run-vars.yml
         job: prepare-gitops-run
-      - cicd/gitops-run.yml
+      - .gitlab/gitops-run.yml
 
 # ================================================================================
 # Promotion
@@ -626,7 +626,7 @@ promote-helm:prepare:
     - promote_helm_ovnkube_c_sha256=`grep "^${container_registry_tag_path}/ovnkube-c:" image.tag | sed s/.*@sha256://`
     - promote_helm_ovnkube_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovnkube-c-arm64:" image.tag | sed s/.*@sha256://`
     - |
-      cat > ./cicd/promote-helm-run-vars.yml <<EOF
+      cat > ./.gitlab/promote-helm-run-vars.yml <<EOF
       variables:
         promote_helm_image_tag: $image_tag
         promote_helm_ovn_c_sha256: $promote_helm_ovn_c_sha256
@@ -640,10 +640,10 @@ promote-helm:prepare:
         promote_helm_need_merge: $promote_helm_need_merge
         promote_helm_need_merge_id: $promote_helm_need_merge_id
       EOF
-    - cat cicd/promote-helm-run-vars.yml
+    - cat .gitlab/promote-helm-run-vars.yml
   artifacts:
     paths:
-      - cicd/promote-helm-run-vars.yml
+      - .gitlab/promote-helm-run-vars.yml
 
 promote-helm:
   stage: promote
@@ -654,9 +654,9 @@ promote-helm:
   trigger:
     strategy: depend
     include:
-      - artifact: cicd/promote-helm-run-vars.yml
+      - artifact: .gitlab/promote-helm-run-vars.yml
         job: promote-helm:prepare
-      - cicd/promote-helm.yml
+      - .gitlab/promote-helm.yml
 
 
 # ================================================================================
@@ -670,7 +670,7 @@ promote-helm:
   script:
     - if [[ -z ${dry_run_value} ]] ; then exit 1 ; fi
     - |
-      make tag-latest -C cicd/build-image -f multiarch.mk \
+      make tag-latest -C .gitlab/build-image -f multiarch.mk \
             dry-run=${dry_run_value} \
             dist=rocky \
             platforms="arm64 amd64" \
@@ -678,7 +678,7 @@ promote-helm:
             registry-tag-path=${container_registry_tag_path} \
             latest-tag=${latest_tag}
     - |
-      make tag-latest -C cicd/build-image -f build-and-push.mk \
+      make tag-latest -C .gitlab/build-image -f build-and-push.mk \
             dry-run=${dry_run_value} \
             dist=ubuntu \
             platform="arm64" \

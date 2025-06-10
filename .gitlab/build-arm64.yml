@@ -4,8 +4,8 @@ stages:
   - image
 
 include:
-  - cicd/runners-tags.yml
-  - cicd/build-common.yml
+  - .gitlab/runners-tags.yml
+  - .gitlab/build-common.yml
 
 default:
   interruptible: true
