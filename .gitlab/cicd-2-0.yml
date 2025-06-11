@@ -41,20 +41,16 @@ spec:
       description: Run downstream kind e2e check pipeline to check artifacts
       type: boolean
       default: true
-    run_flow_tests:
-      description: Run downstream flow tests pipeline to check artifacts
-      type: boolean
-      default: false
-    source_project_name:
+    kind_e2e_project_name:
       description: Source project name repo that triggered pipeline (needed for kind_e2e)
       type: string
-    source_project_path:
+    kind_e2e_project_path:
       description: Branch of the repo that triggered pipeline (needed for kind_e2e)
       type: string
-    source_repo_branch:
+    kind_e2e_repo_branch:
       description: Branch of the repo that triggered pipeline (needed for kind_e2e)
       type: string
-    source_repo_commit_sha:
+    kind_e2e_repo_commit_sha:
       description: Commit sha on repo that triggered pipeline (needed for kind_e2e)
       type: string
     kind_e2e_mode:
@@ -142,11 +138,10 @@ variables:
   force_instance_runners: $[[ inputs.force_instance_runners ]]
   image_tag: $[[ inputs.image_tag ]]
   run_kind_e2e_tests: $[[ inputs.run_kind_e2e_tests ]]
-  run_flow_tests: $[[ inputs.run_flow_tests ]]
-  source_project_path: $[[ inputs.source_project_path ]]
-  source_project_name: $[[ inputs.source_project_name ]]
-  source_repo_branch: $[[ inputs.source_repo_branch ]]
-  source_repo_commit_sha: $[[ inputs.source_repo_commit_sha ]]
+  kind_e2e_project_path: $[[ inputs.kind_e2e_project_path ]]
+  kind_e2e_project_name: $[[ inputs.kind_e2e_project_name ]]
+  kind_e2e_repo_branch: $[[ inputs.kind_e2e_repo_branch ]]
+  kind_e2e_repo_commit_sha: $[[ inputs.kind_e2e_repo_commit_sha ]]
   kind_e2e_mode: $[[ inputs.kind_e2e_mode ]]
   kind_e2e_merge_request_id: $[[ inputs.kind_e2e_merge_request_id ]]
   sdn_cicd_branch: $[[ inputs.sdn_cicd_branch ]]
@@ -211,7 +206,7 @@ default:
 
 .if-sdn-cicd-test:
   rules:
-    - if: $run_flow_tests == "true" || $run_kind_e2e_tests == "true"
+    - if: $run_kind_e2e_tests == "true"
 
 .if-run-gitops:
   rules:
@@ -546,17 +541,16 @@ prepare-sdn-cicd:
     - |
       cat > ./.gitlab/sdn-cicd-vars.yml <<EOF
       variables:
-        source_project_name: $source_project_name
-        source_project_path: $source_project_path
-        source_repo_branch: $source_repo_branch
+        kind_e2e_project_name: $kind_e2e_project_name
+        kind_e2e_project_path: $kind_e2e_project_path
+        kind_e2e_repo_branch: $kind_e2e_repo_branch
+        kind_e2e_repo_commit_sha: $kind_e2e_repo_commit_sha
         kind_e2e_mode: $kind_e2e_mode
         kind_e2e_merge_request_id: $kind_e2e_merge_request_id
         ovn_kubernetes_image_tag: $image_tag
         image_tag: $image_tag
-        source_repo_commit_sha: $source_repo_commit_sha
         sdn_cicd_branch: $sdn_cicd_branch
         run_kind_e2e_tests: $run_kind_e2e_tests
-        run_flow_tests: $run_flow_tests
       EOF
     - cat .gitlab/sdn-cicd-vars.yml
   artifacts:
