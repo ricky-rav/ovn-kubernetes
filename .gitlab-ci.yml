@@ -89,12 +89,12 @@ variables:
           || $CI_PIPELINE_SOURCE == "pipeline" && $ovn_kubernetes_action == "check" ))
 
 # Promote ovn version by modifying hint file.
-.need-promote-ovn:
+.need-promote-pkg-version:
   rules:
     - if: >
         $CI_PIPELINE_SOURCE == "pipeline"
         && $ovn_kubernetes_action == "promote"
-        && $ovn_version != null
+        && ( $ovn_version != null || $ovs_version != null )
         && $promote_dry_run != null
 
 .cicd-2-0-allow-failure:
@@ -405,23 +405,35 @@ cicd-2-0:
       - artifact: cicd-2-0-trigger.yaml
         job: cicd-2-0:prepare
 
-cicd-2-0:promote-ovn:
+cicd-2-0:promote-pkg-version:
   stage: Init-pipeline
+  variables:
+    GIT_STRATEGY: clone
   extends:
-    - .need-promote-ovn
+    - .need-promote-pkg-version
   script:
-    - ovn_version=${ovn_version?OVN}
     - ovn_kubernetes_cicd_yaml=./cicd-nv-ovn-kubernetes.yaml
-    - git config --global user.email "$GITLAB_USER_EMAIL"
-    - git config --global user.name "$GITLAB_USER_NAME"
-    - git checkout $CI_COMMIT_BRANCH
-    - echo yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
-    - yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"$ovn_version\")" $ovn_kubernetes_cicd_yaml
+    - git config --global user.email "${GITLAB_USER_EMAIL}"
+    - git config --global user.name "${GITLAB_USER_NAME}"
+    - git checkout ${CI_COMMIT_BRANCH}
+    - message=""
+    - |
+      if [[ ! -z ${ovn_version} ]] ; then
+        echo yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"${ovn_version}\")" ${ovn_kubernetes_cicd_yaml}
+        yq eval -i "(.buildOvnKubernetes.OVN.pkgTag = \"${ovn_version}\")" ${ovn_kubernetes_cicd_yaml}
+        message=" new ovn version: ${ovn_version};"
+      fi
+    - |
+      if [[ ! -z ${ovs_version} ]] ; then
+        echo yq eval -i "(.buildOvnKubernetes.OVS.pkgTag = \"${ovs_version}\")" ${ovn_kubernetes_cicd_yaml}
+        yq eval -i "(.buildOvnKubernetes.OVS.pkgTag = \"${ovs_version}\")" ${ovn_kubernetes_cicd_yaml}
+        message="${message} new ovs version: ${ovs_version};"
+      fi
     - |
       if [ -n "$(git status --porcelain)" ]; then
          git diff
          git add $ovn_kubernetes_cicd_yaml
-         git commit -m "$GITLAB_USER_NAME commit by SDN CICD. New ovn version: $ovn_version"
+         git commit -m "SDN CICD:${message}"
          # if this push fails because of 403 then you probably need to
          # give permissions to the job to push to repository:
          # Settings > Job token permissions > Allow Git push to the repository
