@@ -113,8 +113,20 @@ cicd-2-0:prepare-mr:
     - run_check=`yq -r '.cicd.skip_all_checks != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_unit_tests=`yq -r '(.cicd.skip_make_check != true) and (.cicd.skip_all_checks != true)' ./cicd-nv-ovn-kubernetes.yaml`
     - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    # Check if HELM_MR_<X> label is used to identify helm repository merge request that
+    # should be used for testing.
+    - gitops_helm_need_merge=false
+    - gitops_helm_need_merge_id=0
+    - |
+      if helm_mr_id=$(echo ${CI_MERGE_REQUEST_LABELS} | tr ',' '\n' | grep HELM_MR | awk -F_ '{print $NF}' ) ; then
+        echo "Helm merge request id: ${helm_mr_id}"
+        gitops_helm_need_merge=true
+        gitops_helm_need_merge_id=${helm_mr_id}
+      fi
     - run_kind_e2e_tests=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
-    - run_build_and_sign=true
     # Handle pipeline customization via merge request message:
     - |
       cat > ./.gitlab/_pipeline_customization.txt <<EOF
@@ -135,8 +147,14 @@ cicd-2-0:prepare-mr:
           image_tag: ${image_tag}
           run_check: ${run_check}
           run_unit_tests: ${run_unit_tests}
-          run_build_and_sign: ${run_build_and_sign}
+          run_build_and_sign: true
           run_gitops: ${run_gitops}
+          gitops_helm_repo: ${gitops_helm_repo}
+          gitops_helm_branch: ${gitops_helm_branch}
+          gitops_helm_values_yaml: ${gitops_helm_values_yaml}
+          gitops_helm_chart_version: 0.0.1-${CI_COMMIT_SHORT_SHA}.${CI_PIPELINE_ID}
+          gitops_helm_need_merge: ${gitops_helm_need_merge}
+          gitops_helm_need_merge_id: ${gitops_helm_need_merge_id}
           run_kind_e2e_tests: ${run_kind_e2e_tests}
           kind_e2e_project_name: $CI_PROJECT_NAME
           kind_e2e_project_path: $CI_PROJECT_PATH
@@ -215,6 +233,11 @@ cicd-2-0:prepare-release:
     - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_need_merge=false
+    - gitops_helm_need_merge_id=0
     - promote_helm=`yq -r '.artifacts.promote == "yes"' ./cicd-nv-ovn-kubernetes.yaml`
     - promote_helm_repo=`yq -r ".artifacts.helm.repo"  ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - promote_helm_branch=`yq -r ".artifacts.helm.branch"  ./cicd-nv-ovn-kubernetes.yaml`
@@ -230,6 +253,8 @@ cicd-2-0:prepare-release:
           echo "Helm merge request id: ${helm_mr_id}"
           promote_helm_need_merge=true
           promote_helm_need_merge_id=${helm_mr_id}
+          gitops_helm_need_merge=true
+          gitops_helm_need_merge_id=${helm_mr_id}
         fi
       fi
     - |
@@ -244,6 +269,12 @@ cicd-2-0:prepare-release:
           run_unit_tests: true
           run_build_and_sign: true
           run_gitops: true
+          gitops_helm_repo: ${gitops_helm_repo}
+          gitops_helm_branch: ${gitops_helm_branch}
+          gitops_helm_values_yaml: ${gitops_helm_values_yaml}
+          gitops_helm_chart_version: 0.0.1-${CI_COMMIT_SHORT_SHA}.${CI_PIPELINE_ID}
+          gitops_helm_need_merge: ${gitops_helm_need_merge}
+          gitops_helm_need_merge_id: ${gitops_helm_need_merge_id}
           run_kind_e2e_tests: true
           kind_e2e_project_name: $CI_PROJECT_NAME
           kind_e2e_project_path: $CI_PROJECT_PATH
@@ -257,10 +288,7 @@ cicd-2-0:prepare-release:
           promote_helm_need_merge: ${promote_helm_need_merge}
           promote_helm_need_merge_id: ${promote_helm_need_merge_id}
           latest_tag: ${latest_tag}
-          email_message_description: |
-              $GITLAB_USER_NAME just built and pushed ovnkube
-              CommitID: $CI_COMMIT_SHORT_SHA
-              Pipeline URL: $CI_PIPELINE_URL
+          tag_latest_dry_run: ${RUN_CICD_1_0:-"false"}
       EOF
     - cat ./cicd-2-0-trigger.yaml
   artifacts:
@@ -277,7 +305,10 @@ cicd-2-0:prepare-pre-def-tag:
   script:
     # Handle pipeline customization via merge request message:
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
-    # TODO: probably it should be in push pipeline
+    - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_need_merge=false
     - |
       if [[ ! -z $PRE_DEF_TAG ]] ; then
         echo "Using pre defined tag $PRE_DEF_TAG"
@@ -298,6 +329,10 @@ cicd-2-0:prepare-pre-def-tag:
           run_unit_tests: false
           run_build_and_sign: false
           run_gitops: true
+          gitops_helm_repo: ${gitops_helm_repo}
+          gitops_helm_branch: ${gitops_helm_branch}
+          gitops_helm_values_yaml: ${gitops_helm_values_yaml}
+          gitops_helm_chart_version: 0.0.1-${CI_COMMIT_SHORT_SHA}.${CI_PIPELINE_ID}
           run_kind_e2e_tests: true
           kind_e2e_project_name: $CI_PROJECT_NAME
           kind_e2e_project_path: $CI_PROJECT_PATH
@@ -324,6 +359,10 @@ cicd-2-0:prepare-check:
     - ovn_version=${ovn_version:-`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
     - ovs_version=${ovs_version:-`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
     - run_gitops=${run_gitops:-true}
+    - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_helm_need_merge=false
     - run_check=${run_check:-true}
     - run_unit_tests=${run_unit_tests:-true}
     - run_kind_e2e_tests=${run_kind_e2e_tests:-true}
@@ -352,6 +391,10 @@ cicd-2-0:prepare-check:
           run_unit_tests: ${run_unit_tests}
           run_build_and_sign: true
           run_gitops: ${run_gitops}
+          gitops_helm_repo: ${gitops_helm_repo}
+          gitops_helm_branch: ${gitops_helm_branch}
+          gitops_helm_values_yaml: ${gitops_helm_values_yaml}
+          gitops_helm_chart_version: 0.0.1-${CI_COMMIT_SHORT_SHA}.${CI_PIPELINE_ID}
           run_kind_e2e_tests: ${run_kind_e2e_tests}
           kind_e2e_project_name: ${kind_e2e_project_name}
           kind_e2e_project_path: ${kind_e2e_project_path}
