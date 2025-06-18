@@ -27,6 +27,32 @@ spec:
       description: Run downstream pipeline in gitos to check artifacts
       type: boolean
       default: true
+    gitops_helm_repo:
+      description: repostitory that contains helm for deployment test.
+      type: string
+      default: sdn/sdn-helm/ovn-kubernetes
+    gitops_helm_branch:
+      description: repostitory that contains helm for deployment test.
+      type: string
+      default: main
+    gitops_helm_values_yaml:
+      description: values files to be patched with new container.
+      type: string
+      default: values-ngn.yaml
+    gitops_helm_chart_version:
+      description: version of helm chart that will be published.
+      type: string
+      default: .not-defined
+    gitops_helm_need_merge:
+      description: If true then helm merge request will be used to build helm chart
+        to instead of regular helm branch.
+      type: boolean
+      default: false
+    gitops_helm_need_merge_id:
+      description: If gitops_helm_need_merge_id is true then this variable defines
+        identifier of merge request that will be used to build helm chart.
+      type: number
+      default: 0
     run_build_and_sign:
       description: If set to false then skip build and sign phases
         run_check is still optional and can be run.
@@ -135,6 +161,12 @@ variables:
   run_check: $[[ inputs.run_check ]]
   run_unit_tests: $[[ inputs.run_unit_tests ]]
   run_gitops: $[[ inputs.run_gitops ]]
+  gitops_helm_repo: $[[ inputs.gitops_helm_repo ]]
+  gitops_helm_branch: $[[ inputs.gitops_helm_branch ]]
+  gitops_helm_values_yaml: $[[ inputs.gitops_helm_values_yaml ]]
+  gitops_helm_chart_version: $[[ inputs.gitops_helm_chart_version ]]
+  gitops_helm_need_merge: $[[ inputs.gitops_helm_need_merge ]]
+  gitops_helm_need_merge_id: $[[ inputs.gitops_helm_need_merge_id ]]
   force_instance_runners: $[[ inputs.force_instance_runners ]]
   image_tag: $[[ inputs.image_tag ]]
   run_kind_e2e_tests: $[[ inputs.run_kind_e2e_tests ]]
@@ -269,7 +301,7 @@ default:
   image: ${builder_image}
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} --password-stdin
-    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${GITLAB_READ_API_TOKEN} controller-dir=$(pwd)/go-controller -C .gitlab/containers
+    - make dist=${dist} platform=${platform} GITLAB_API_TOKEN=${CI_JOB_TOKEN} controller-dir=$(pwd)/go-controller -C .gitlab/containers
     - image_current_tag=`cat .gitlab/containers/_registry/current-tag`
     - |
       cat > ./builder-image.yaml <<EOF
@@ -570,17 +602,66 @@ sdn-cicd:
         job: prepare-sdn-cicd
       - .gitlab/sdn-cicd-run.yml
 
+gitops:helm:prepare:
+  stage: test
+  extends:
+    - .tags-amd64
+    - .if-run-gitops
+  needs:
+    - sign
+  script:
+    - build_helm_ovn_c_sha256=`grep "^${container_registry_tag_path}/ovn-c:" image.tag | sed s/.*@sha256://`
+    - build_helm_ovn_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovn-c-arm64:" image.tag | sed s/.*@sha256://`
+    - build_helm_ovnkube_c_sha256=`grep "^${container_registry_tag_path}/ovnkube-c:" image.tag | sed s/.*@sha256://`
+    - build_helm_ovnkube_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovnkube-c-arm64:" image.tag | sed s/.*@sha256://`
+    - |
+      cat > ./.gitlab/helm-run-vars.yml <<EOF
+      variables:
+        helm_repo: ${gitops_helm_repo}
+        helm_branch: ${gitops_helm_branch}
+        helm_action: build
+        build_helm_image_tag: ${image_tag}
+        build_helm_ovnkube_c_sha256: ${build_helm_ovnkube_c_sha256}
+        build_helm_ovn_c_sha256: ${build_helm_ovn_c_sha256}
+        build_helm_ovn_c_arm64_sha256: ${build_helm_ovn_c_arm64_sha256}
+        build_helm_ovnkube_c_arm64_sha256: ${build_helm_ovnkube_c_arm64_sha256}
+        build_helm_chart_version: ${gitops_helm_chart_version}
+        build_helm_values_yaml: ${gitops_helm_values_yaml}
+        build_helm_need_merge: ${gitops_helm_need_merge}
+        build_helm_need_merge_id: ${gitops_helm_need_merge_id}
+      EOF
+    - cat .gitlab/helm-run-vars.yml
+  artifacts:
+    paths:
+      - .gitlab/helm-run-vars.yml
+
+gitops:helm:
+  stage: test
+  extends:
+    - .if-run-gitops
+  needs:
+    - gitops:helm:prepare
+  trigger:
+    strategy: depend
+    include:
+      - artifact: .gitlab/helm-run-vars.yml
+        job: gitops:helm:prepare
+      - local: .gitlab/helm-run.yml
+
 prepare-gitops-run:
   stage: test
   extends:
     - .tags-amd64
     - .if-run-gitops
+  needs:
+    - gitops:helm
   script:
     - |
       cat > ./.gitlab/gitops-run-vars.yml <<EOF
       variables:
         sdn_gitops_branch: $sdn_gitops_branch
         OVN_KUBERNETES_IMAGE_TAG: $image_tag
+        OVN_KUBERNETES_HELM: ${gitops_helm_chart_version}
       EOF
     - cat .gitlab/gitops-run-vars.yml
   artifacts:
@@ -620,24 +701,24 @@ promote-helm:prepare:
     - promote_helm_ovnkube_c_sha256=`grep "^${container_registry_tag_path}/ovnkube-c:" image.tag | sed s/.*@sha256://`
     - promote_helm_ovnkube_c_arm64_sha256=`grep "^${container_registry_tag_path}/ovnkube-c-arm64:" image.tag | sed s/.*@sha256://`
     - |
-      cat > ./.gitlab/promote-helm-run-vars.yml <<EOF
+      cat > ./.gitlab/helm-run-vars.yml <<EOF
       variables:
+        helm_repo: $promote_helm_repo
+        helm_branch: $promote_helm_branch
         promote_helm_image_tag: $image_tag
         promote_helm_ovn_c_sha256: $promote_helm_ovn_c_sha256
         promote_helm_ovn_c_arm64_sha256: $promote_helm_ovn_c_arm64_sha256
         promote_helm_ovnkube_c_sha256: $promote_helm_ovnkube_c_sha256
         promote_helm_ovnkube_c_arm64_sha256: $promote_helm_ovnkube_c_arm64_sha256
-        promote_helm_repo: $promote_helm_repo
-        promote_helm_branch: $promote_helm_branch
         promote_helm_values_yaml: $promote_helm_values_yaml
         promote_helm_dry_run: $promote_helm_dry_run
         promote_helm_need_merge: $promote_helm_need_merge
         promote_helm_need_merge_id: $promote_helm_need_merge_id
       EOF
-    - cat .gitlab/promote-helm-run-vars.yml
+    - cat .gitlab/helm-run-vars.yml
   artifacts:
     paths:
-      - .gitlab/promote-helm-run-vars.yml
+      - .gitlab/helm-run-vars.yml
 
 promote-helm:
   stage: promote
@@ -648,9 +729,9 @@ promote-helm:
   trigger:
     strategy: depend
     include:
-      - artifact: .gitlab/promote-helm-run-vars.yml
+      - artifact: .gitlab/helm-run-vars.yml
         job: promote-helm:prepare
-      - .gitlab/promote-helm.yml
+      - local: .gitlab/helm-run.yml
 
 
 # ================================================================================

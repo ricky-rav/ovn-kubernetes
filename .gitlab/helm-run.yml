@@ -1,6 +1,6 @@
 #
 # This is just bridging pipeline between
-# ovn-kubernetes pipelines and sdn/helm/ovn-kubernetes pipeline.
+# ovn-kubernetes pipelines and sdn/sdn-helm/ovn-kubernetes pipeline.
 # Purpose of it is variables isolation (see details in .gitlab-ci.yml)
 #
 stages:
@@ -15,8 +15,8 @@ promote-helm:trigger:
   extends:
     - .always
   trigger:
-    project: $promote_helm_repo
-    branch: $promote_helm_branch
+    project: $helm_repo
+    branch: $helm_branch
     strategy: depend
     forward:
       yaml_variables: true
