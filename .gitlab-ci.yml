@@ -359,6 +359,8 @@ cicd-2-0:prepare-check:
     - ovn_version=${ovn_version:-`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
     - ovs_version=${ovs_version:-`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`}
     - run_gitops=${run_gitops:-true}
+    - gitops_branch=${gitops_branch:-""}
+    - gitops_config=${gitops_config:-"{}"}
     - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
@@ -366,7 +368,7 @@ cicd-2-0:prepare-check:
     - run_check=${run_check:-true}
     - run_unit_tests=${run_unit_tests:-true}
     - run_kind_e2e_tests=${run_kind_e2e_tests:-true}
-    - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - image_tag=${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}
     - |
       if [[ $run_kind_e2e_tests == "true" ]] ; then
           kind_e2e_project_name=${kind_e2e_project_name:?"kind_e2e_project_name is required"}
@@ -391,6 +393,8 @@ cicd-2-0:prepare-check:
           run_unit_tests: ${run_unit_tests}
           run_build_and_sign: true
           run_gitops: ${run_gitops}
+          gitops_branch: ${gitops_branch}
+          gitops_config: '${gitops_config}'
           gitops_helm_repo: ${gitops_helm_repo}
           gitops_helm_branch: ${gitops_helm_branch}
           gitops_helm_values_yaml: ${gitops_helm_values_yaml}

@@ -27,6 +27,16 @@ spec:
       description: Run downstream pipeline in gitos to check artifacts
       type: boolean
       default: true
+    gitops_branch:
+      description: sdn/gitops repository branch that should be used for pipelines.
+        Empty string means value of gitops_default_branch variable.
+      type: string
+      default: ''
+    gitops_config:
+      description: Addtional parameters passed to gitops repository in JSON
+        format. Schema of the JSON is defined by gitops project.
+      type: string
+      default: '{}'
     gitops_helm_repo:
       description: repostitory that contains helm for deployment test.
       type: string
@@ -161,6 +171,9 @@ variables:
   run_check: $[[ inputs.run_check ]]
   run_unit_tests: $[[ inputs.run_unit_tests ]]
   run_gitops: $[[ inputs.run_gitops ]]
+  gitops_branch: $[[ inputs.gitops_branch ]]
+  gitops_config: $[[ inputs.gitops_config ]]
+  gitops_default_branch: "main"
   gitops_helm_repo: $[[ inputs.gitops_helm_repo ]]
   gitops_helm_branch: $[[ inputs.gitops_helm_branch ]]
   gitops_helm_values_yaml: $[[ inputs.gitops_helm_values_yaml ]]
@@ -180,7 +193,6 @@ variables:
   container_registry: nvcr.io
   container_registry_path: nv-ngn/sdn
   container_registry_tag_path: ${container_registry}/${container_registry_path}
-  sdn_gitops_branch: main
   promote_helm: $[[ inputs.promote_helm ]]
   promote_helm_repo: $[[ inputs.promote_helm_repo ]]
   promote_helm_branch: $[[ inputs.promote_helm_branch ]]
@@ -659,8 +671,9 @@ prepare-gitops-run:
     - |
       cat > ./.gitlab/gitops-run-vars.yml <<EOF
       variables:
-        sdn_gitops_branch: $sdn_gitops_branch
-        OVN_KUBERNETES_IMAGE_TAG: $image_tag
+        sdn_gitops_branch: ${gitops_branch:-${gitops_default_branch}}
+        GITOPS_CONFIG: '${gitops_config}'
+        OVN_KUBERNETES_IMAGE_TAG: ${image_tag}
         OVN_KUBERNETES_HELM: ${gitops_helm_chart_version}
       EOF
     - cat .gitlab/gitops-run-vars.yml
