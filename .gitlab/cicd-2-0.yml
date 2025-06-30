@@ -674,7 +674,7 @@ prepare-gitops-run:
         sdn_gitops_branch: ${gitops_branch:-${gitops_default_branch}}
         GITOPS_CONFIG: '${gitops_config}'
         OVN_KUBERNETES_IMAGE_TAG: ${image_tag}
-        OVN_KUBERNETES_HELM: ${gitops_helm_chart_version}
+        OVN_KUBERNETES_HELM: nv-ngn/sdn/ovn-kubernetes:${gitops_helm_chart_version}
       EOF
     - cat .gitlab/gitops-run-vars.yml
   artifacts:
