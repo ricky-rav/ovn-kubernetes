@@ -4,7 +4,7 @@
 projectID: 2649
 buildOvnKubernetes:
   OVN:
-    pkgTag: 25.03.0.b1b3df86.31053285
+    pkgTag: 25.03.0.606d540a.31201278
   OVS:
     pkgTag: 3.5.0.bc74cc20.31053285
 # helm deployment info for this branch
