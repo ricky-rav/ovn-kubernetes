@@ -113,6 +113,26 @@ cicd-2-0:prepare-mr:
     - run_check=`yq -r '.cicd.skip_all_checks != true' ./cicd-nv-ovn-kubernetes.yaml`
     - run_unit_tests=`yq -r '(.cicd.skip_make_check != true) and (.cicd.skip_all_checks != true)' ./cicd-nv-ovn-kubernetes.yaml`
     - run_gitops=`yq -r '.cicd.skip_CICD_deploy_and_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_run_flow_tests=`yq -r '.cicd.skip_flowTests != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_run_cicd_tests=`yq -r '.cicd.skip_SDN_tests != true' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_test_ovn_ic_mode=`yq -r '(.cicd.ovn_mode == null) or (.cicd.ovn_mode == "both") or (.cicd.ovn_mode == "ic")' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_test_ovn_central_mode=`yq -r '(.cicd.ovn_mode == null) or (.cicd.ovn_mode == "both") or (.cicd.ovn_mode == "central")' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_flow_tests_repo_path=`yq -r ".test.flowTests.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_config_flow_tests_repo_branch=`yq -r ".test.flowTests.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - |
+      gitops_config=$(jq -c <<EOF
+      {
+        "runFlowTests": ${gitops_config_run_flow_tests},
+        "runCiCdTests": ${gitops_config_run_cicd_tests},
+        "flowTests": {
+           "repoPath": "${gitops_config_flow_tests_repo_path}",
+           "branch": "${gitops_config_flow_tests_repo_branch}"
+        },
+        "testOvnIcMode": ${gitops_config_test_ovn_ic_mode},
+        "testOvnCentralMode": ${gitops_config_test_ovn_central_mode}
+      }
+      EOF
+      )
     - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
@@ -149,6 +169,7 @@ cicd-2-0:prepare-mr:
           run_unit_tests: ${run_unit_tests}
           run_build_and_sign: true
           run_gitops: ${run_gitops}
+          gitops_config: '${gitops_config}'
           gitops_helm_repo: ${gitops_helm_repo}
           gitops_helm_branch: ${gitops_helm_branch}
           gitops_helm_values_yaml: ${gitops_helm_values_yaml}
@@ -233,6 +254,24 @@ cicd-2-0:prepare-release:
     - ovn_version=`yq -r '.buildOvnKubernetes.OVN.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - ovs_version=`yq -r '.buildOvnKubernetes.OVS.pkgTag' ./cicd-nv-ovn-kubernetes.yaml`
     - image_tag=$CI_COMMIT_SHORT_SHA-$CI_PIPELINE_ID
+    - gitops_config_test_ovn_ic_mode=`yq -r '(.cicd.ovn_mode == null) or (.cicd.ovn_mode == "both") or (.cicd.ovn_mode == "ic")' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_test_ovn_central_mode=`yq -r '(.cicd.ovn_mode == null) or (.cicd.ovn_mode == "both") or (.cicd.ovn_mode == "central")' ./cicd-nv-ovn-kubernetes.yaml`
+    - gitops_config_flow_tests_repo_path=`yq -r ".test.flowTests.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - gitops_config_flow_tests_repo_branch=`yq -r ".test.flowTests.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
+    - |
+      gitops_config=$(jq -c <<EOF
+      {
+        "runFlowTests": true,
+        "runCiCdTests": true,
+        "flowTests": {
+           "repoPath": "${gitops_config_flow_tests_repo_path}",
+           "branch": "${gitops_config_flow_tests_repo_branch}"
+        },
+        "testOvnIcMode": ${gitops_config_test_ovn_ic_mode},
+        "testOvnCentralMode": ${gitops_config_test_ovn_central_mode}
+      }
+      EOF
+      )
     - gitops_helm_repo=`yq -r ".deploy.helm.ovn-kubernetes.repo" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_branch=`yq -r ".deploy.helm.ovn-kubernetes.branch" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
     - gitops_helm_values_yaml=`yq -r ".deploy.helm.ovn-kubernetes.values_yaml" ./cicd-nv-ovn-kubernetes.yaml | sed "s/ssh:\/\/[^\/]*\///" | sed "s/.git$//"`
@@ -269,6 +308,7 @@ cicd-2-0:prepare-release:
           run_unit_tests: true
           run_build_and_sign: true
           run_gitops: true
+          gitops_config: '${gitops_config}'
           gitops_helm_repo: ${gitops_helm_repo}
           gitops_helm_branch: ${gitops_helm_branch}
           gitops_helm_values_yaml: ${gitops_helm_values_yaml}
