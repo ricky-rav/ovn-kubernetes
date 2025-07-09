@@ -10,7 +10,7 @@ stages:
   rules:
     - when: always
 
-promote-helm:trigger:
+helm:trigger:
   stage: downstream
   extends:
     - .always
