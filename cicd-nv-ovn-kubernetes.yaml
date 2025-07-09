@@ -4,9 +4,9 @@
 projectID: 2649
 buildOvnKubernetes:
   OVN:
-    pkgTag: 25.03.0.606d540a.31201278
+    pkgTag: 25.03.0.a17a8e02.31312004
   OVS:
-    pkgTag: 3.5.0.bc74cc20.31053285
+    pkgTag: 3.5.0.6eb0e554.31312004
 # helm deployment info for this branch
 # These repos and branches will be used by CICD to deploy the relevant helm charts
 # on the CICD rig chosen
