@@ -106,15 +106,17 @@ define build-ginkgo-test-binary
 endef
 
 define build-go-test-binary
-	@echo Build go test $1 $$@
-	cd $(controller-dir) && go test -buildvcs=false -mod=vendor -covermode atomic -race -c $(controller-github)/$1 -o $$@
+	@echo Build and test go $1 $$@
+	set -eo pipefail ;  cd $(controller-dir) && $(call maybe-add-sudo,$1)go test -buildvcs=false -mod=vendor -covermode atomic -race -test.v -test.coverprofile $(build-dir)/$(call coverprofile,$1) $(controller-github)/$1 2>&1 $(call tee-logs,$1) $(suppress-logs)
 
 endef
 
+# Don't include /sbin paths.
+export PATH := /usr/local/go/bin:/usr/bin:/usr/local/bin:/bin
 
 check-requires-root = $(filter $1,$(root-packages-short))
 check-parallel = $(filter $1,$(parallel-run))
-maybe-add-sudo = $(if $(call check-requires-root,$1),sudo )
+maybe-add-sudo = $(if $(call check-requires-root,$1),sudo PATH=$(PATH) )
 maybe-add-parallel = $(if $(call check-parallel,$1),--output-interceptor-mode none --nodes 6)
 
 # Suppress log output of test by filtering
@@ -122,7 +124,7 @@ suppress-logs = | grep -v '^[ ]*[ID][0-9]*' | grep -v '^[ ]*[0-9]*/[0-9]*/[0-9]*
 
 tee-logs = | tee >(gzip --stdout > $(call test-log,$1).gz)
 
-run-ginkgo-test-binary = cd $(controller-dir) && $(call maybe-add-sudo,$1)ginkgo \
+run-ginkgo-test-binary = set -eo pipefail ; cd $(controller-dir) && $(call maybe-add-sudo,$1)/usr/local/go/bin/ginkgo \
                              run \
                              -v \
                              --force-newlines \
@@ -134,9 +136,6 @@ run-ginkgo-test-binary = cd $(controller-dir) && $(call maybe-add-sudo,$1)ginkgo
                              $(call test-binary,$1) 2>&1 \
                              $(call tee-logs,$1) $(suppress-logs)
 
-run-go-test-binary = $(call maybe-add-sudo,$1)$(call test-binary,$1) \
-                            --test.v \
-                            -test.coverprofile $(build-dir)/$(call coverprofile,$1) 2>&1 \
-                            $(call tee-logs,$1) $(suppress-logs)
+run-go-test-binary = echo Nothing else to do
 
 $(foreach pkg,$(current-group),$(eval $(call define-package-rules,$(pkg))))
