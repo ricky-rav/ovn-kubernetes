@@ -98,7 +98,7 @@ variables:
         && $promote_dry_run != null
 
 .cicd-2-0-allow-failure:
-  allow_failure: true
+  allow_failure: false
 
 # Prepare data for merge request CI/CD 2.0 pipeline
 cicd-2-0:prepare-mr:
