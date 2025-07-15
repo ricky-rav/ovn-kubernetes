@@ -206,17 +206,6 @@ cicd-2-0:prepare-fork:
     - .need-run-cicd-2-0-forked
   script:
     - |
-      if [[ -z $GITLAB_READ_API_TOKEN ]] ; then
-        echo Please setup your fork. You need:
-        echo   1. Generate read token via gitlab UI:
-        echo      Access Tokens > [Add new token]
-        echo      Select scope: read_api
-        echo   2. Add GITLAB_READ_API_TOKEN variable with
-        echo      generated token value via gitlab UI:
-        echo      Settings / CI/CD / Variables
-        exit 1
-      fi
-    - |
       cat > ./cicd-2-0-trigger.yaml <<EOF
       include:
         local: .gitlab/cicd-2-0.yml
