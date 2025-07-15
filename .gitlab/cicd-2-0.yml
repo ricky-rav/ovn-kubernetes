@@ -812,7 +812,7 @@ tag-latest:
     - cat image.tag | sed 's/$/ <br\/>/' >> $notify_msg_file
     - /tmp/sendmail.py "$to" "$subject" --msg "`cat $notify_msg_file`"
 
-notify:signed:
+notify:checked:
   stage: notify
   image: gitlab-master.nvidia.com:5005/ngc/apps/woof:latest
   extends:
@@ -821,6 +821,10 @@ notify:signed:
     - .if-send-notify-signed
   needs:
     - sign
+    - job: run-gitops
+      optional: true
+    - job: sdn-cicd
+      optional: true
 
 notify:promoted:
   stage: notify
