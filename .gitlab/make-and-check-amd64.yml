@@ -64,3 +64,4 @@ unit-tests:amd64:
       - '_build/*.log.gz'
       - '_build/*.coverprofile'
       - '_build/junit-*.xml'
+    when: always
