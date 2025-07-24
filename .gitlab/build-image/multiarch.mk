@@ -48,7 +48,7 @@ endif
 
 # $1 is ovnkube-c or ovn-c
 define tag-latest
-	$(docker) manifest $($1-latest-image) $(foreach platform,$(platforms),--amend $(call make-full-arch-image-tag,$1,$(platform)))
+	$(docker) manifest create $($1-latest-image) $(foreach platform,$(platforms),--amend $(call make-full-arch-image-tag,$1,$(platform)))
 	$(docker) manifest push $($1-latest-image)
 
 endef
