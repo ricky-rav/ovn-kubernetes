@@ -757,6 +757,7 @@ promote-helm:
     - sign
   script:
     - if [[ -z ${dry_run_value} ]] ; then exit 1 ; fi
+    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
     - |
       make tag-latest -C .gitlab/build-image -f multiarch.mk \
             dry-run=${dry_run_value} \
