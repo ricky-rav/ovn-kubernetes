@@ -6,7 +6,7 @@
 include:
   - project: 'sdn/sdn-cicd'
     file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
-    ref: 'master'
+    ref: 'main'
 
 # ================================================================================
 # CI/CD 2.0:
@@ -29,7 +29,7 @@ include:
 
 variables:
   sdn_ns: "sdn"
-  DISABLE_CICD_2_0: false
+  DISABLE_CICD_2_0: true
 
 # Check that CICD 2.0 pipeline is executed as part of merge request:
 # Either from forked repository to sdn/ovn-kubernetes or
