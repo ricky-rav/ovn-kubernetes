@@ -4,7 +4,7 @@
 projectID: 2649
 buildOvnKubernetes:
   OVN:
-    pkgTag: 25.03.0.a24d1cb7.31860386
+    pkgTag: 25.03.0.fe3d81fd.32545300
   OVS:
     pkgTag: 3.5.0.ca5037f9.31698479
 # helm deployment info for this branch
@@ -46,7 +46,6 @@ test:
     central:
       run-groups:
         - all
-
 cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
@@ -54,16 +53,13 @@ cicd:
   skip_all_checks: false
   skip_flowTests: false
   skip_SDN_tests: false
-
   # ovn mode: central, ic or both
   ovn_mode: both
-
   # CICD Rigs are organized in pools. We currently have OVN-K8S-VALIDATION-RIGS, CICD-OVN-IC-RIGS and OVN-UPSTREAM-VALIDATION-RIGS
   # Ask for a rig pool. Default empty means cicd choose for you.
   cicd_rig_pool: ""
   # Ask for a specific rig within a specific pool. Default empy means cicd choose for you.
   cicd_rig: ""
-
 # This section describes in which branch and repo to commit the new artifacts in the merge/push case
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
