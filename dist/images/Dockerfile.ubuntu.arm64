@@ -8,7 +8,7 @@
 #
 # So this file will change over time.
 
-ARG OSV=ubuntu:20.04
+ARG OSV=ubuntu:25.04
 FROM $OSV
 
 ARG K8S_VER="=1.21.1-00"
