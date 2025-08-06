@@ -1,3 +1,4 @@
+before it is merge downstream nv-1.3 a5b7e1fa6d1 and upstream 744ecedf57
 merge downstream nv-1.3 38264ec10 and upstream b6b0842a2
 merge downstream nv-1.3 318d6db10 and upstream 535ad75985
 
@@ -7,8 +8,6 @@ test/e2e/localnet-underlay.go
 test/e2e/multihoming.go
 test/e2e/networkqos.go
 
-467a91fce79a910823fce9b2d2743434c4bd0c07
-
-git diff -w 744ecedf57 b6b0842a2
-git diff -w b6b0842a2 535ad7598
-
+467a91f update golang crypto package to v0.35 but it is already in v0.36
+commented out "node pmtud management" IPv6 unit test because of permission error in cicd, works on my own setup.
+ovnkube-node now watches for all nodes because of the pmtu blocking support https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5153
