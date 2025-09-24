@@ -2,6 +2,7 @@ before it is merge downstream nv-1.3 a5b7e1fa6d1 and upstream 744ecedf57
 merge downstream nv-1.3 38264ec10 and upstream b6b0842a2
 merge downstream nv-1.3 318d6db10 and upstream 535ad75985
 merge downstream nv-1.3 88bd62cfd and upstream 8f7fc5a1c
+merge downstream nv-1.3 98636c30a and upstream 8f7fc5a1c
 
 // conflict in the following files has simply accept the changes in upstream
 test/e2e/kubevirt.go
@@ -14,3 +15,9 @@ commented out "node pmtud management" IPv6 unit test because of permission error
 ovnkube-node now watches for all nodes because of the pmtu blocking support https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5153
 
 git diff 535ad75985 8f7fc5a1c
+
+contrib/kind.sh
+dist/images/Dockerfile.ubuntu
+dist/images/Dockerfile.arm64
+
+compare upto pkg/libovsdb
