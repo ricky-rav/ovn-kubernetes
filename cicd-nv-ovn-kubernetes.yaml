@@ -13,10 +13,10 @@ buildOvnKubernetes:
 deploy:
   helm:
 # Uncomment to change settings
-#    ovn-kubernetes:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-#      branch: nv-1.3
-#      values_yaml: values-images.yaml
+    ovn-kubernetes:
+      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
+      branch: nv-1.4
+      values_yaml: values-images.yaml
 #    multus:
 #      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
 #      branch: main
@@ -64,9 +64,9 @@ cicd:
 artifacts:
   # Only mark yes if the artifacts built from this branch should end up in SDN ovn-kubernetes helm charts repo
   promote: yes
-  latestImageNameTag: latest-nv-1.3
+  latestImageNameTag: latest-nv-1.4
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
-    branch: nv-1.3
+    branch: nv-1.4
     values_yaml: values-images.yaml
