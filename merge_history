@@ -10,6 +10,7 @@ merge downstream nv-1.3 d61df3743 and upstream 7bc123a26
 merge downstream nv-1.3 d61df3743 and upstream 04a98b6fc
 merge downstream nv-1.3 d61df3743 and upstream f077fdd12
 merge downstream nv-1.3 d61df3743 and upstream 95bfa38e2
+merge downstream nv-1.3 d61df3743 and upstream 815c017b6
 
 // conflict in the following files has simply accept the changes in upstream
 test/e2e/kubevirt.go
