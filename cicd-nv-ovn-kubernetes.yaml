@@ -12,26 +12,59 @@ buildOvnKubernetes:
 # on the CICD rig chosen
 deploy:
   helm:
-# Uncomment to change settings
-    ovn-kubernetes:
-      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-      branch: nv-1.4
-      values_yaml: values-images.yaml
-#    multus:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
-#      branch: main
-#    sriov-network-device-plugin:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sriov-network-device-plugin.git
-#      branch: main
-#    sdn-mutator:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-mutator.git
-#      branch: main
-#    metallb:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb.git
-#      branch: main
-#    metallb-crd:
-#      repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb-crd.git
-#      branch: main
+    NGN:
+      ovn-kubernetes:
+        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
+        branch: nv-1.4
+        values_yaml: values-images.yaml
+#      multus:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
+#        branch: main
+#      sriov-network-device-plugin:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sriov-network-device-plugin.git
+#        branch: main
+#      sdn-mutator:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-mutator.git
+#        branch: main
+#      metallb:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb.git
+#        branch: main
+#      metallb-crd:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb-crd.git
+#        branch: main
+#      network-probes:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/network-probes.git
+#        branch: main
+#      sdn-monitoring:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-monitoring.git
+#        branch: main
+    VMaaS:
+      ovn-kubernetes:
+        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
+        branch: nv-1.4
+        values_yaml: values-images.yaml
+#      multus:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
+#        branch: main
+#      sriov-network-device-plugin:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sriov-network-device-plugin.git
+#        branch: main
+#      sdn-mutator:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-mutator.git
+#        branch: main
+#      metallb:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb.git
+#        branch: main
+#      metallb-crd:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb-crd.git
+#        branch: main
+#      network-probes:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/network-probes.git
+#        branch: main
+#      sdn-monitoring:
+#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-monitoring.git
+#        branch: main
+
 
 test:
   flowTests:
@@ -46,6 +79,9 @@ test:
     central:
       run-groups:
         - all
+    VMaaS:
+      run-groups:
+        - all-VMaaS
 cicd:
   # Mark skip_CICD_deploy_and_tests true to skip deploy and all tests
   skip_CICD_deploy_and_tests: false
