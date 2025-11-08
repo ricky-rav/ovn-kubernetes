@@ -1,17 +1,4 @@
-before it is merge downstream nv-1.3 a5b7e1fa6d1 and upstream 744ecedf57
-merge downstream nv-1.3 38264ec10 and upstream b6b0842a2
-merge downstream nv-1.3 318d6db10 and upstream 535ad75985
-merge downstream nv-1.3 88bd62cfd and upstream 8f7fc5a1c
-merge downstream nv-1.3 98636c30a and upstream 8f7fc5a1c
-merge downstream nv-1.3 98636c30a and upstream f5931bffb
-merge downstream nv-1.3 98636c30a and upstream ef92f7820
-merge downstream nv-1.3 d61df3743 and upstream ef92f7820
-merge downstream nv-1.3 d61df3743 and upstream 7bc123a26
-merge downstream nv-1.3 d61df3743 and upstream 04a98b6fc
-merge downstream nv-1.3 d61df3743 and upstream f077fdd12
-merge downstream nv-1.3 d61df3743 and upstream 95bfa38e2
-merge downstream nv-1.3 d61df3743 and upstream 815c017b6
-merge downstream nv-1.3 d61df3743 and upstream a525ceef8
+merge downstream nv-1.3 d61df3743 and upstream e06223f99
 
 // conflict in the following files has simply accept the changes in upstream
 test/e2e/kubevirt.go
@@ -22,9 +9,3 @@ test/e2e/networkqos.go
 467a91f update golang crypto package to v0.35 but it is already in v0.36
 commented out "node pmtud management" IPv6 unit test because of permission error in cicd, works on my own setup.
 ovnkube-node now watches for all nodes because of the pmtu blocking support https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5153
-
-contrib/kind.sh
-dist/images/Dockerfile.ubuntu
-dist/images/Dockerfile.arm64
-
-3836f3fa2ca9c239761d52602464392b778f0b26 remove XDP support
