@@ -1,4 +1,4 @@
-merge downstream nv-1.3 d61df3743 and upstream 7a4621c73e
+merge downstream nv-1.3 d61df3743 and upstream 25aae39a6
 
 // conflict in the following files has simply accept the changes in upstream
 test/e2e/kubevirt.go
