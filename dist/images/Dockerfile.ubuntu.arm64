@@ -8,7 +8,7 @@
 #
 # So this file will change over time.
 
-#TBD-merge ARG OSV=ubuntu:25.04
+#TBD-merge ARG OSV=ubuntu:25.10
 ARG OSV=ubuntu:20.04
 FROM $OSV
 
