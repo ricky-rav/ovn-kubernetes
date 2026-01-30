@@ -32,9 +32,6 @@ deploy:
         #      metallb-crd:
         #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb-crd.git
         #        branch: main
-        #      network-probes:
-        #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/network-probes.git
-        #        branch: main
         #      sdn-monitoring:
         #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-monitoring.git
         #        branch: main
@@ -57,9 +54,6 @@ deploy:
 #        branch: main
 #      metallb-crd:
 #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/metallb-crd.git
-#        branch: main
-#      network-probes:
-#        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/network-probes.git
 #        branch: main
 #      sdn-monitoring:
 #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/sdn-monitoring.git

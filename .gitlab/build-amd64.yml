@@ -25,11 +25,3 @@ image:amd64:
     - .ovn-k8s-build-image
     - .always
 
-image-netprobes:amd64:
-  image: ${builder_image}
-  stage: image
-  extends:
-    - .tags-amd64
-    - .ovn-k8s-build-netprobes-image
-    - .always
-
