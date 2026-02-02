@@ -473,24 +473,6 @@ build:rocky8.8-multiarch:
             image-tag=${image_tag} \
             registry-tag-path=${container_registry_tag_path}
 
-build-netprobes:rocky8.8-multiarch:
-  stage: build
-  image: ${builder_image}
-  extends:
-    - .tags-amd64
-    - .if-build
-  needs:
-    - build:rocky8.8-arm64
-    - build:rocky8.8-amd64
-  script:
-    - docker login -u=\$oauthtoken -p=${NVCR_PASS} ${container_registry}
-    - |
-      make -C .gitlab/build-image -f multiarch-netprobes.mk \
-            dist=rocky \
-            platforms="arm64 amd64" \
-            image-tag=${image_tag} \
-            registry-tag-path=${container_registry_tag_path}
-
 # ================================================================================
 # Sign images
 # TODO: image names must be get from make -C .gitlab/build-image ...
@@ -506,10 +488,8 @@ build-netprobes:rocky8.8-multiarch:
     - sign_args="nvsec-client-id=${STARFLEET_USER} nvsec-client-secret=${STARFLEET_PASS} output=image.tag"
     - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c:${image_tag}
     - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c:${image_tag}
-    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target:${image_tag}
     - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovn-c-arm64:${image_tag}
     - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-c-arm64:${image_tag}
-    - make -C .gitlab/tools/image-sign ${sign_args} image-name=${container_registry_tag_path}/ovnkube-networkprobe-target-arm64:${image_tag}
     - cp .gitlab/tools/image-sign/image.tag .
   artifacts:
     paths:
@@ -525,7 +505,6 @@ sign-checked:
     - make-lint
     - make-and-check:rocky8.8-amd64
     - build:rocky8.8-multiarch
-    - build-netprobes:rocky8.8-multiarch
     - build:ubuntu20.04-arm64
 
 # Sign after build
@@ -536,7 +515,6 @@ sign-not-checked:
     - .sign
   needs:
     - build:rocky8.8-multiarch
-    - build-netprobes:rocky8.8-multiarch
     - build:ubuntu20.04-arm64
 
 # Just collect artifacts from sign-checked or sign-not-checked
