@@ -71,7 +71,7 @@ test:
         - all-ic
     central:
       run-groups:
-        - all
+        - basic
     VMaaS:
       run-groups:
         - all-VMaaS
