@@ -15,6 +15,8 @@ metadata:
   name: ovn-kubernetes
 
 ---
+# ovn-policy.yaml
+#
 # Setup for Kubernetes to support the ovn-kubernetes plugin
 #
 # Create the service account and policies.
@@ -34,79 +36,17 @@ metadata:
   name: ovn-k8s-configmap
 rules:
 - apiGroups: [""]
-  resources: ["configmaps", "secrets"]
+  resources: ["configmaps"]
   verbs: ["get", "watch", "list"]
-
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: ovn-kubernetes
-  name: ovn-k8s-lease
-rules:
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs: ["create", "get", "list", "update", "patch"] # patch is downstream only
-  - apiGroups: [""]
-    resources:
-      - endpoints
-    verbs: ["get"]
-
-
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ovn-misc
-  namespace: ovn-kubernetes
-
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: ovn-kubernetes
-  name: ovn-k8s-endpoints
-rules:
 - apiGroups:
-  - ""
+  - coordination.k8s.io
   resources:
-  - endpoints
-  verbs: ["get"]
-
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: only-ovnk8s-configmaps
-  namespace: ovn-kubernetes
-roleRef:
-  name: ovn-k8s-configmap
-  kind: Role
-  apiGroup: rbac.authorization.k8s.io
-subjects:
-- kind: ServiceAccount
-  name: ovn-misc
-  namespace: ovn-kubernetes
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: only-ovnk8s-endpoints
-  namespace: ovn-kubernetes
-roleRef:
-  name: ovn-k8s-endpoints
-  kind: Role
-  apiGroup: rbac.authorization.k8s.io
-subjects:
-- kind: ServiceAccount
-  name: ovn-misc
-  namespace: ovn-kubernetes
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - update
 
 {% if in_upgrade != "true" -%}
 ---
@@ -121,9 +61,8 @@ data:
   net_cidr:      "{{ net_cidr }}"
   svc_cidr:      "{{ svc_cidr }}"
   k8s_apiserver: "{{ k8s_apiserver }}"
-  mtu:           "{{ mtu_value | default('1440') }}"
+  mtu:           "{{ mtu_value }}"
   host_network_namespace: "{{ host_network_namespace }}"
-
 
 ---
 # ovn-host-network-namespace.yaml
@@ -137,6 +76,26 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "{{ host_network_namespace }}"
+{%- endif %}
+
+---
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+{%- if ovn_no_overlay_enable == "true" %}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+    outbound-snat = disabled
+    routing = unmanaged
 {%- endif %}
 
 {% if advertise_default_network == "true" -%}
