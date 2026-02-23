@@ -1,3 +1,0 @@
-[submodule "cicd/tools"]
-	path = .gitlab/tools
-	url = ../sdn-cicd-tools
