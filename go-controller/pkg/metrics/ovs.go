@@ -6,10 +6,8 @@ package metrics
 import (
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -315,35 +313,20 @@ func convertToFloat64(val *int) float64 {
 	return value
 }
 
-func OvsVersionInfoUpdater(ovsDBClient libovsdbclient.Client, nodeName string, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := getOvsVersionInfo(nodeName, ovsDBClient); err != nil {
-				klog.Errorf("Error getting ovs version: %v", err)
-			}
-		case <-stopChan:
-			return
-		}
-	}
-}
-
-func getOvsVersionInfo(nodeName string, ovsDBClient libovsdbclient.Client) (err error) {
+func getOvsVersionInfo(nodeName string, ovsDBClient libovsdbclient.Client) {
 	metricOvsVersion.Reset()
 	openVswitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
-		return fmt.Errorf("failed to get ovsdb openvswitch table :(%v)", err)
+		klog.Errorf("Failed to get ovsdb openvswitch entry :(%v)", err)
+		return
 	}
 	if openVswitch.OVSVersion != nil {
 		ovsVersion := *openVswitch.OVSVersion
 		metricOvsVersion.WithLabelValues(ovsVersion, nodeName).Set(1)
 	} else {
-		err = fmt.Errorf("failed to get ovs version information")
+		klog.Errorf("Failed to get ovs version information")
+		return
 	}
-	return err
 }
 
 // ovsDatapathLookupsMetrics obtains the ovs datapath
@@ -530,21 +513,6 @@ func updateOvsDatapathMetrics(ovsVswitchdAppctl ovsClient) {
 	}
 }
 
-// ovsDatapathMetricsUpdater updates the ovs datapath metrics
-func ovsDatapathMetricsUpdater(ovsVswitchdAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			updateOvsDatapathMetrics(ovsVswitchdAppctl)
-		case <-stopChan:
-			return
-		}
-	}
-}
-
 func resetOvsBridgeMetrics() {
 	// we need to reset metrics vectors prior to collecting new ones.
 	// this reset is local to prom client endpoint only and helps us
@@ -556,30 +524,6 @@ func resetOvsBridgeMetrics() {
 		interfaceMetricInfo.metric.Reset()
 	}
 
-}
-
-// ovsBridgeMetricsUpdater updates bridge related metrics
-func ovsBridgeMetricsUpdater(ovsDBClient libovsdbclient.Client, ovsOfctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			resetOvsBridgeMetrics()
-			// set geneve interface metrics
-			err := geneveInterfaceMetricsUpdate()
-			if err != nil {
-				klog.Errorf("%s", err.Error())
-			}
-			// update ovs bridge metrics
-			if err = updateOvsBridgeMetrics(ovsDBClient, ovsOfctl); err != nil {
-				klog.Errorf("Getting ovs bridge info failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
 }
 
 type interfaceDetails struct {
@@ -659,7 +603,7 @@ func getOvsBridgeOpenFlowsCount(ovsOfctl ovsClient, bridgeName string) (float64,
 		"flow_count field", bridgeName)
 }
 
-func registerOvsInterfaceMetrics(metricNamespace, metricSubsystem string) {
+func registerOvsInterfaceMetrics(registry prometheus.Registerer, metricNamespace, metricSubsystem string) {
 	// The metrics not covered by the OVS native metrics are moved to ovsInterfaceExtraMetricsDataMap,
 	// so the ovsInterfaceExtraMetricsDataMap can be used to register them when OVS native metrics is enabled.
 	// This function is only called when OVS native metrics is disabled, so merge them into ovsInterfaceMetricsDataMap to
@@ -680,7 +624,7 @@ func registerOvsInterfaceMetrics(metricNamespace, metricSubsystem string) {
 				"port",
 				"interface",
 			})
-		prometheus.MustRegister(InterfaceMetricInfo.metric)
+		registry.MustRegister(InterfaceMetricInfo.metric)
 	}
 }
 
@@ -886,62 +830,6 @@ func setOvsInterfaceStatusFields(interfaceBridge, interfacePort, interfaceName s
 		interfaceName, firmwareVersion).Set(1)
 }
 
-func getGeneveInterfaceStatsFieldValue(stats *netlink.LinkStatistics, field string) float64 {
-	r := reflect.ValueOf(stats)
-	fieldValue := reflect.Indirect(r).FieldByName(field)
-	return float64(fieldValue.Uint())
-}
-
-func setGeneveInterfaceStatistics(geneveInterfaceName string, link netlink.Link) {
-	var geneveInterfaceStatsMap = map[string]string{
-		"rx_packets":   "RxPackets",
-		"rx_bytes":     "RxBytes",
-		"rx_dropped":   "RxDropped",
-		"rx_frame_err": "RxFrameErrors",
-		"rx_over_err":  "RxOverErrors",
-		"rx_crc_err":   "RxCrcErrors",
-		"rx_errors":    "RxErrors",
-		"tx_packets":   "TxPackets",
-		"tx_bytes":     "TxBytes",
-		"tx_dropped":   "TxDropped",
-		"collisions":   "Collisions",
-		"tx_errors":    "TxErrors",
-	}
-
-	for statsName, geneveStatsName := range geneveInterfaceStatsMap {
-		metricName := "interface_" + statsName
-		metricValue := getGeneveInterfaceStatsFieldValue(link.Attrs().Statistics, geneveStatsName)
-		ovsInterfaceMetricsDataMap[metricName].metric.WithLabelValues(
-			"none", "none", geneveInterfaceName).Set(metricValue)
-	}
-}
-
-// geneveInterfaceMetricsUpdate updates the geneve interface
-// metrics obtained through netlink library equivalent to
-// (ip -s li show genev_sys_6081)
-func geneveInterfaceMetricsUpdate() error {
-	geneveInterfaceName := "genev_sys_6081"
-	link, err := netlink.LinkByName(geneveInterfaceName)
-	if err != nil {
-		if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
-			return fmt.Errorf("failed to lookup link %s: (%v)",
-				geneveInterfaceName, err)
-		}
-		return nil
-	}
-	ovsInterfaceMetricsDataMap["interface_mtu"].metric.WithLabelValues(
-		"none", "none", geneveInterfaceName).Set(float64(link.Attrs().MTU))
-	geneveInterfaceLinkState := link.Attrs().OperState.String()
-	geneveInterfaceLinkStateValue := getOvsInterfaceState(&geneveInterfaceLinkState)
-	ovsInterfaceMetricsDataMap["interface_link_state"].metric.WithLabelValues(
-		"none", "none", geneveInterfaceName).Set(geneveInterfaceLinkStateValue)
-	ovsInterfaceMetricsDataMap["interface_ifindex"].metric.WithLabelValues(
-		"none", "none", geneveInterfaceName).Set(float64(link.Attrs().Index))
-	setGeneveInterfaceStatistics(geneveInterfaceName, link)
-	setOvsInterfaceQdiscIngress(geneveInterfaceName, "none", "none", link)
-	return nil
-}
-
 // ovsInterfaceMetricsUpdater updates the ovs interface metrics
 // through ovsdb-client from ovs-db Interface table updates.
 func ovsInterfaceMetricsUpdate(ovsDBClient libovsdbclient.Client,
@@ -1047,21 +935,6 @@ func setOvsMemoryMetrics(ovsVswitchdAppctl ovsClient) (err error) {
 	return nil
 }
 
-func ovsMemoryMetricsUpdater(ovsVswitchdAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := setOvsMemoryMetrics(ovsVswitchdAppctl); err != nil {
-				klog.Errorf("Setting ovs memory metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
-}
-
 // setOvsHwOffloadMetrics updates the hw-offload, tc-policy metrics
 // obtained from Open_vSwitch table updates
 func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
@@ -1093,22 +966,6 @@ func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
 	metricOvsTcPolicy.Set(tcPolicyMap[tcPolicyValue])
 	return nil
 
-}
-
-func ovsHwOffloadMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := setOvsHwOffloadMetrics(ovsDBClient); err != nil {
-				klog.Errorf("Setting ovs hardware offload metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
 }
 
 type ovsInterfaceMetricsDetails struct {
@@ -1435,76 +1292,63 @@ var ovsVswitchdCoverageShowMetricsMap = map[string]*metricDetails{
 }
 var registerOvsMetricsOnce sync.Once
 
-func RegisterOvsMetrics(nodeName string, ovsDBClient libovsdbclient.Client,
-	metricsScrapeInterval int, stopChan <-chan struct{}) {
+// registerOvsMetrics registers the ovs metrics
+func registerOvsMetrics(registry prometheus.Registerer) {
 	if config.Metrics.EnableOvsNativeMetrics {
 		// When OVS native metrics are enabled, only need to register the additional metrics
 		// which are not covered by the OVS native metrics
-		RegisterAdditionalOvsMetrics()
+		RegisterAdditionalOvsMetrics(registry)
 		return
 	}
 
 	registerOvsMetricsOnce.Do(func() {
 		// Register OVS datapath metrics.
-		prometheus.MustRegister(metricOvsVersion)
-		prometheus.MustRegister(metricOvsDpTotal)
-		prometheus.MustRegister(metricOvsDp)
-		prometheus.MustRegister(metricOvsDpIfTotal)
-		prometheus.MustRegister(metricOvsDpIf)
-		prometheus.MustRegister(metricOvsDpFlowsTotal)
-		prometheus.MustRegister(metricOvsDpFlowsLookupHit)
-		prometheus.MustRegister(metricOvsDpFlowsLookupMissed)
-		prometheus.MustRegister(metricOvsDpFlowsLookupLost)
-		prometheus.MustRegister(metricOvsDpPacketsTotal)
-		prometheus.MustRegister(metricOvsdpMasksHit)
-		prometheus.MustRegister(metricOvsDpMasksTotal)
-		prometheus.MustRegister(metricOvsDpMasksHitRatio)
-		prometheus.MustRegister(metricOvsDpOffloadedFlowsTotal)
+		registry.MustRegister(metricOvsVersion)
+		registry.MustRegister(metricOvsDpTotal)
+		registry.MustRegister(metricOvsDp)
+		registry.MustRegister(metricOvsDpIfTotal)
+		registry.MustRegister(metricOvsDpIf)
+		registry.MustRegister(metricOvsDpFlowsTotal)
+		registry.MustRegister(metricOvsDpFlowsLookupHit)
+		registry.MustRegister(metricOvsDpFlowsLookupMissed)
+		registry.MustRegister(metricOvsDpFlowsLookupLost)
+		registry.MustRegister(metricOvsDpPacketsTotal)
+		registry.MustRegister(metricOvsdpMasksHit)
+		registry.MustRegister(metricOvsDpMasksTotal)
+		registry.MustRegister(metricOvsDpMasksHitRatio)
+		registry.MustRegister(metricOvsDpOffloadedFlowsTotal)
 		// Register OVS bridge statistics & attributes metrics
-		prometheus.MustRegister(metricOvsBridgeTotal)
-		prometheus.MustRegister(metricOvsBridge)
-		prometheus.MustRegister(metricOvsBridgePortsTotal)
-		prometheus.MustRegister(metricOvsBridgeFlowsTotal)
+		registry.MustRegister(metricOvsBridgeTotal)
+		registry.MustRegister(metricOvsBridge)
+		registry.MustRegister(metricOvsBridgePortsTotal)
+		registry.MustRegister(metricOvsBridgeFlowsTotal)
 		// Register ovs Memory metrics
-		prometheus.MustRegister(metricOvsHandlersTotal)
-		prometheus.MustRegister(metricOvsRevalidatorsTotal)
+		registry.MustRegister(metricOvsHandlersTotal)
+		registry.MustRegister(metricOvsRevalidatorsTotal)
 		// Register OVS HW offload metrics
-		prometheus.MustRegister(metricOvsHwOffload)
-		prometheus.MustRegister(metricOvsTcPolicy)
+		registry.MustRegister(metricOvsHwOffload)
+		registry.MustRegister(metricOvsTcPolicy)
 		// Register OVS Interface metrics
-		registerOvsInterfaceMetrics(types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
-		prometheus.MustRegister(metricInterfaceDriverName)
-		prometheus.MustRegister(metricInterfaceDriverVersion)
-		prometheus.MustRegister(metricInterfaceFirmwareVersion)
-		prometheus.MustRegister(MetricOvsInterfaceUpWait)
+		registerOvsInterfaceMetrics(registry, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
+		registry.MustRegister(metricInterfaceDriverName)
+		registry.MustRegister(metricInterfaceDriverVersion)
+		registry.MustRegister(metricInterfaceFirmwareVersion)
+		registry.MustRegister(MetricOvsInterfaceUpWait)
 		// Register the OVS coverage/show metrics
 		componentCoverageShowMetricsMap[ovsVswitchd] = ovsVswitchdCoverageShowMetricsMap
-		registerCoverageShowMetrics(ovsVswitchd, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
-		// OVS version updater
-		go OvsVersionInfoUpdater(ovsDBClient, nodeName, metricsScrapeInterval, stopChan)
+		registerCoverageShowMetrics(registry, ovsVswitchd, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
 
 		// When ovnkube-node is running in privileged mode, the hostPID will be set to true,
 		// and therefore it can monitor OVS running on the host using PID.
 		if !config.UnprivilegedMode {
-			prometheus.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
+			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 				PidFn:     prometheus.NewPidFileFn(filepath.Join(config.OvsPaths.RunDir, "ovs-vswitchd.pid")),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd),
 			}))
-			prometheus.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
+			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 				PidFn:     prometheus.NewPidFileFn(filepath.Join(config.OvsPaths.RunDir, "ovsdb-server.pid")),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemOvsDB),
 			}))
 		}
-
-		// OVS datapath metrics updater
-		go ovsDatapathMetricsUpdater(util.RunOvsVswitchdAppCtl, metricsScrapeInterval, stopChan)
-		// OVS bridge metrics updater
-		go ovsBridgeMetricsUpdater(ovsDBClient, util.RunOVSOfctl, metricsScrapeInterval, stopChan)
-		// OVS memory metrics updater
-		go ovsMemoryMetricsUpdater(util.RunOvsVswitchdAppCtl, metricsScrapeInterval, stopChan)
-		// OVS hw Offload metrics updater
-		go ovsHwOffloadMetricsUpdater(ovsDBClient, metricsScrapeInterval, stopChan)
-		// OVS coverage/show metrics updater.
-		go coverageShowMetricsUpdater(ovsVswitchd, metricsScrapeInterval, stopChan)
 	})
 }
