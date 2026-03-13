@@ -15,7 +15,7 @@ deploy:
     NGN:
       ovn-kubernetes:
         repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-        branch: nv-1.4
+        branch: nv-1.5
         values_yaml: values-images.yaml
         #      multus:
         #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
@@ -38,7 +38,7 @@ deploy:
     VMaaS:
       ovn-kubernetes:
         repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
-        branch: nv-1.4
+        branch: nv-1.5
         values_yaml: values-images.yaml
 #      multus:
 #        repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/multus.git
@@ -97,5 +97,5 @@ artifacts:
   helm:
     repo: ssh://git@gitlab-master.nvidia.com:12051/sdn/sdn-helm/ovn-kubernetes.git
     projectID: 109659
-    branch: nv-1.4
+    branch: nv-1.5
     values_yaml: values-images.yaml
