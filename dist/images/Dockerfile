@@ -27,11 +27,11 @@ RUN yum install -y epel-release net-tools
 
 # Note: to update kubernetes version you need to update kubectl.sha256.arm64 & kubectl.sha256.amd64 files:
 # $ export K8S_VER={new-version}
-# $ curl -L https://storage.googleapis.com/kubernetes-release/release/$K8S_VER/bin/linux/amd64/kubectl.sha256 > ./kubectl.sha256.amd64
-# $ curl -L https://storage.googleapis.com/kubernetes-release/release/$K8S_VER/bin/linux/arm64/kubectl.sha256 > ./kubectl.sha256.arm64
+# $ curl -L https://dl.k8s.io/release/$K8S_VER/bin/linux/amd64/kubectl.sha256 > ./kubectl.sha256.amd64
+# $ curl -L https://dl.k8s.io/release/$K8S_VER/bin/linux/arm64/kubectl.sha256 > ./kubectl.sha256.arm64
 # See SDN-3261 for more details.
 COPY kubectl.sha256.$ARCH /tmp/
-RUN curl -L https://storage.googleapis.com/kubernetes-release/release/v1.29.8/bin/linux/$ARCH/kubectl > /usr/bin/kubectl \
+RUN curl -L https://dl.k8s.io/release/v1.33.10/bin/linux/$ARCH/kubectl > /usr/bin/kubectl \
    && echo `cat /tmp/kubectl.sha256.$ARCH` /usr/bin/kubectl | sha256sum -c - \
    && chmod +x /usr/bin/kubectl
 
