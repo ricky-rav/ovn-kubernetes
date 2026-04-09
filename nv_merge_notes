@@ -1,4 +1,6 @@
-merge downstream nv-1.3 d61df3743 nv-1.5 5f9de2e4 and upstream 7af5e8ca
+merge downstream nv-1.5 2012d6d7 and upstream 054f5e87
+
+removed the sortDeviceID fix in ovn-k8s itself, as now the multus-cni vendor code already has the fix
 
 commented out "node pmtud management" IPv6 unit test because of permission error in cicd, works on my own setup.
 ovnkube-node now watches for all nodes because of the pmtu blocking support https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5153
