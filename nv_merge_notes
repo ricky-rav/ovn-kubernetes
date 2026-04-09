@@ -1,4 +1,4 @@
-merge downstream nv-1.5 2012d6d7 and upstream 054f5e87
+merge downstream nv-1.5 2012d6d7 and upstream 613c1a39
 
 removed the sortDeviceID fix in ovn-k8s itself, as now the multus-cni vendor code already has the fix
 
