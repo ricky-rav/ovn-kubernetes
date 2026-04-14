@@ -69,6 +69,10 @@ test:
     ic:
       run-groups:
         - all-ic
+      # Not yet supported in IC mode for nv-1.5
+      exclude:
+        - reroute-traffic
+        - connect-to
     central:
       run-groups:
         - basic
