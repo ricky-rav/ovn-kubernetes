@@ -3,3 +3,19 @@ include:
     file: 'gitlab-cicd/ovn-kubernetes-gitlab-ci.yaml'
     ref: 'main'
 
+Verify-third-party-licenses:
+  stage: Init-pipeline
+  interruptible: true
+  image: golang:1.25.4-bookworm
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web"'
+  variables:
+    GOPRIVATE: gitlab-master.nvidia.com
+    GONOSUMDB: gitlab-master.nvidia.com
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends jq
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab-master.nvidia.com/".insteadOf "https://gitlab-master.nvidia.com/"
+  script:
+    - cd go-controller
+    - make verify-third-party-licenses
