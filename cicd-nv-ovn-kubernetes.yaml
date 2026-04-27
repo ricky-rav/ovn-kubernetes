@@ -87,7 +87,7 @@ cicd:
   skip_flowTests: false
   skip_SDN_tests: false
   # Set deployment modes, valid values are: VMaaS-ic, NGN-ic, NGN-central
-  deployment_mode: VMaaS-ic, NGN-ic, NGN-central
+  deployment_mode: VMaaS-ic, NGN-ic
   # CICD Rigs are organized in pools. We currently have OVN-K8S-VALIDATION-RIGS, CICD-OVN-IC-RIGS and OVN-UPSTREAM-VALIDATION-RIGS
   # Ask for a rig pool. Default empty means cicd choose for you.
   cicd_rig_pool: ""
