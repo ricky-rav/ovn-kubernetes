@@ -19,3 +19,7 @@ Verify-third-party-licenses:
   script:
     - cd go-controller
     - make verify-third-party-licenses
+
+variables:
+  BUILD_UB2404_IMAGE: "yes"
+
