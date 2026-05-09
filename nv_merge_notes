@@ -1,4 +1,1 @@
-merge downstream nv-1.5 0bce4b6be and upstream 84a000e4
-
-commented out "node pmtud management" IPv6 unit test because of permission error in cicd, works on my own setup.
-ovnkube-node now watches for all nodes because of the pmtu blocking support https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5153
+merge downstream nv-1.5 ac0f04af and upstream 251895c
