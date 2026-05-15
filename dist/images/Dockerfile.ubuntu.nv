@@ -36,8 +36,8 @@ curl netcat-traditional net-tools firewalld nftables iptables \
 && mkdir -p /var/run/openvswitch/ \
 && mkdir -p /etc/openvswitch/ 
 # Copy binaries and assets from builder (grouped by destination to minimize layers)
-COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/ovnkube /ovn-kubernetes/dist/images/ovndbchecker /ovn-kubernetes/dist/images/ovnkube-identity /ovn-kubernetes/dist/images/ovn-kube-util /usr/bin/
-COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/git_info /ovn-kubernetes/dist/images/ovnkube.sh /ovn-kubernetes/dist/images/ovndb-raft-functions.sh /ovn-kubernetes/dist/images/ovnkube-node-readiness-check.sh /ovn-kubernetes/dist/images/ovnkube-node-liveness-check.sh /root/
+COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/ovnkube /ovn-kubernetes/dist/images/ovnkube-identity /ovn-kubernetes/dist/images/ovn-kube-util /usr/bin/
+COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/git_info /ovn-kubernetes/dist/images/ovnkube.sh /ovn-kubernetes/dist/images/ovnkube-node-readiness-check.sh /ovn-kubernetes/dist/images/ovnkube-node-liveness-check.sh /root/
 COPY  --from=builder /ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
