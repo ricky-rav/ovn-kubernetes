@@ -65,7 +65,7 @@ INSTALL_PKGS=" \
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY ovnkube.sh ovnkube-init.sh ovndb-raft-functions.sh ovnkube-node-readiness-check.sh ovnkube-node-liveness-check.sh git_info /root/
+COPY ovnkube.sh ovnkube-init.sh ovnkube-node-readiness-check.sh ovnkube-node-liveness-check.sh git_info /root/
 COPY ovn-kube-util /usr/bin/
 
 LABEL io.k8s.display-name="ovn" \
@@ -81,7 +81,7 @@ RUN  mkdir -p /usr/libexec/cni/
 
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the rpm
-COPY ovnkube ovndbchecker ovnkube-identity /usr/bin/
+COPY ovnkube ovnkube-identity /usr/bin/
 COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 COPY git_info /root/
