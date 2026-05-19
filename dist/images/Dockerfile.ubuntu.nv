@@ -17,6 +17,12 @@ ARG ARTIFACTORY_CERT
 RUN printf 'deb [trusted=yes] https://%s@urm.nvidia.com/artifactory/sw-ngn-sdn-debian %s main\n' \
 "${ARTIFACTORY_CERT}" "${DIST_CODE}" \
 > /etc/apt/sources.list.d/ngn-sdn-ovn.list \
+&& DEBIAN_FRONTEND=noninteractive apt-get update \
+&& apt-get install -y --no-install-recommends openvswitch-switch=${OVS_VER} openvswitch-common=${OVS_VER} \
+ovn-common=${OVN_VER} ovn-host=${OVN_VER} ovn-central=${OVN_VER} \
+&& rm -f /etc/apt/sources.list.d/ngn-sdn-ovn.list \
+&& DEBIAN_FRONTEND=noninteractive apt-get update \
+&& apt-get install -y --no-install-recommends curl netcat-traditional net-tools firewalld nftables iptables \
 && mkdir -p -m 755 /etc/apt/keyrings \
 && curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_VER}/deb/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
 && chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
@@ -24,11 +30,8 @@ RUN printf 'deb [trusted=yes] https://%s@urm.nvidia.com/artifactory/sw-ngn-sdn-d
   > /etc/apt/sources.list.d/kubernetes.list \
 && chmod 644 /etc/apt/sources.list.d/kubernetes.list \
 && DEBIAN_FRONTEND=noninteractive apt-get update \
-&& apt-get install -y --no-install-recommends openvswitch-switch=${OVS_VER} openvswitch-common=${OVS_VER} \
-ovn-common=${OVN_VER} ovn-host=${OVN_VER} ovn-central=${OVN_VER} \
-curl netcat-traditional net-tools firewalld nftables iptables \
 && apt-get install -y --no-install-recommends kubectl \
-&& rm -f /etc/apt/sources.list.d/ngn-sdn-ovn.list /etc/apt/sources.list.d/kubernetes.list /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
+&& rm -f /etc/apt/sources.list.d/kubernetes.list /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
 && apt-get autoremove -y \
 && rm -rf /var/lib/apt/lists/* \
 && rm -rf /tmp/* /var/tmp/* \
