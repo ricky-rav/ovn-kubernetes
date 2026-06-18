@@ -22,7 +22,7 @@ RUN printf 'deb [trusted=yes] https://%s@urm.nvidia.com/artifactory/sw-ngn-sdn-d
 ovn-common=${OVN_VER} ovn-host=${OVN_VER} ovn-central=${OVN_VER} \
 && rm -f /etc/apt/sources.list.d/ngn-sdn-ovn.list \
 && DEBIAN_FRONTEND=noninteractive apt-get update \
-&& apt-get install -y --no-install-recommends curl netcat-traditional net-tools firewalld nftables iptables iproute2 ncat dnsutils \
+&& apt-get install -y --no-install-recommends curl netcat-traditional net-tools firewalld nftables iptables iproute2 ncat dnsutils socat \
 && mkdir -p -m 755 /etc/apt/keyrings \
 && curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_VER}/deb/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
 && chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
@@ -40,7 +40,7 @@ ovn-common=${OVN_VER} ovn-host=${OVN_VER} ovn-central=${OVN_VER} \
 && mkdir -p /etc/openvswitch/ 
 # Copy binaries and assets from builder (grouped by destination to minimize layers)
 COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/ovnkube /ovn-kubernetes/dist/images/ovnkube-identity /ovn-kubernetes/dist/images/ovn-kube-util /usr/bin/
-COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/git_info /ovn-kubernetes/dist/images/ovnkube.sh /ovn-kubernetes/dist/images/ovnkube-node-readiness-check.sh /ovn-kubernetes/dist/images/ovnkube-node-liveness-check.sh /root/
+COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/git_info /ovn-kubernetes/dist/images/ovnkube.sh /ovn-kubernetes/dist/images/ovnkube-init.sh /ovn-kubernetes/dist/images/ovnkube-node-readiness-check.sh /ovn-kubernetes/dist/images/ovnkube-node-liveness-check.sh /root/
 COPY  --from=builder /ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 COPY --chmod=755  --from=builder /ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
