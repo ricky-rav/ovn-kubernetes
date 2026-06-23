@@ -220,6 +220,8 @@ set_common_default_params() {
     echo "Route advertisements requires multi-network to be enabled (-mne)"
     exit 1
   fi
+  FRR_K8S_PRELOAD_IMAGES=${FRR_K8S_PRELOAD_IMAGES:-true}
+  FRR_K8S_PRELOAD_PLATFORM=${FRR_K8S_PRELOAD_PLATFORM:-linux/amd64}
 
   ENABLE_EVPN=${ENABLE_EVPN:-false}
   if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
@@ -1467,6 +1469,78 @@ resolve_downstream_frr_k8s_helm_chart_dir() {
   echo "${chart_dir}"
 }
 
+preload_downstream_frr_k8s_image() {
+  local image=$1
+  local image_archive="${DOWNSTREAM_FRR_K8S_TMP_DIR}/frr-k8s-image.tar"
+
+  if ! "${OCI_BIN}" image inspect "${image}" >/dev/null 2>&1; then
+    if [ "${OCI_BIN}" == "docker" ] && [ -n "${FRR_K8S_PRELOAD_PLATFORM}" ]; then
+      if ! "${OCI_BIN}" pull --platform "${FRR_K8S_PRELOAD_PLATFORM}" "${image}"; then
+        echo "Failed to pull ${image}; relying on cluster image pull configuration"
+        return
+      fi
+    elif ! "${OCI_BIN}" pull "${image}"; then
+      echo "Failed to pull ${image}; relying on cluster image pull configuration"
+      return
+    fi
+  fi
+
+  if [ "${OCI_BIN}" == "docker" ] && [ -n "${FRR_K8S_PRELOAD_PLATFORM}" ]; then
+    if ! "${OCI_BIN}" save --platform "${FRR_K8S_PRELOAD_PLATFORM}" -o "${image_archive}" "${image}"; then
+      if ! "${OCI_BIN}" pull --platform "${FRR_K8S_PRELOAD_PLATFORM}" "${image}" ||
+         ! "${OCI_BIN}" save --platform "${FRR_K8S_PRELOAD_PLATFORM}" -o "${image_archive}" "${image}"; then
+        echo "Failed to save ${image}; relying on cluster image pull configuration"
+        return
+      fi
+    fi
+  elif ! "${OCI_BIN}" save -o "${image_archive}" "${image}"; then
+    echo "Failed to save ${image}; relying on cluster image pull configuration"
+    return
+  fi
+
+  if ! kind load image-archive "${image_archive}" --name "${KIND_CLUSTER_NAME}"; then
+    echo "Failed to load ${image} into kind; relying on cluster image pull configuration"
+  fi
+}
+
+preload_downstream_frr_k8s_images() {
+  local chart_dir=$1
+  shift
+
+  if [ "${FRR_K8S_PRELOAD_IMAGES}" != true ]; then
+    return
+  fi
+
+  local rendered_images
+  if ! rendered_images=$(
+    helm template "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}" "${chart_dir}" \
+      --namespace "${DOWNSTREAM_FRR_K8S_NAMESPACE}" \
+      "$@" |
+      awk '$1 == "image:" {gsub(/"/, "", $2); print $2}' |
+      sort -u
+  ); then
+    echo "Failed to render downstream frr-k8s chart; relying on cluster image pull configuration"
+    return
+  fi
+
+  if [ -z "${rendered_images}" ]; then
+    echo "No downstream frr-k8s images found to preload"
+    return
+  fi
+
+  local images=()
+  mapfile -t images <<< "${rendered_images}"
+
+  echo "Preloading downstream frr-k8s images into kind ..."
+  for image in "${images[@]}"; do
+    if [ "$KIND_LOCAL_REGISTRY" == true ]; then
+      echo "${image} should already be available in local registry, not loading"
+    else
+      preload_downstream_frr_k8s_image "${image}"
+    fi
+  done
+}
+
 install_downstream_frr_k8s() {
   echo "Installing downstream frr-k8s with Helm ..."
 
@@ -1480,17 +1554,15 @@ install_downstream_frr_k8s() {
   chart_dir=$(resolve_downstream_frr_k8s_helm_chart_dir)
   echo "Using downstream frr-k8s Helm chart from ${chart_dir}"
 
-  local helm_args=(
-    upgrade --install "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}" "${chart_dir}"
-    --namespace "${DOWNSTREAM_FRR_K8S_NAMESPACE}"
-    --create-namespace
+  local helm_value_args=(
     -f "${chart_dir}/values.yaml"
     -f "${chart_dir}/values-images.yaml"
   )
+  local helm_set_args=()
 
   # TODO: replace with the label we actually use on our worker nodes downstream
   if [ "${FRR_K8S_WORKER_NODES_ONLY}" == true ]; then
-    helm_args+=(
+    helm_set_args+=(
       --set frrk8s.tolerateMaster=false
       --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=node-role.kubernetes.io/control-plane'
       --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=DoesNotExist'
@@ -1498,6 +1570,16 @@ install_downstream_frr_k8s() {
       --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[1].operator=DoesNotExist'
     )
   fi
+
+  preload_downstream_frr_k8s_images "${chart_dir}" "${helm_value_args[@]}" "${helm_set_args[@]}"
+
+  local helm_args=(
+    upgrade --install "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}" "${chart_dir}"
+    --namespace "${DOWNSTREAM_FRR_K8S_NAMESPACE}"
+    --create-namespace
+    "${helm_value_args[@]}"
+    "${helm_set_args[@]}"
+  )
 
   if [ "$RUN_IN_CONTAINER" != true ]; then
     kind export kubeconfig --name ${KIND_CLUSTER_NAME}
