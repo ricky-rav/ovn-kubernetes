@@ -617,12 +617,10 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
     # Enable bgp port listening on node, required for managed mode. FRR will listen on port 179 to receive BGP updates from other nodes.
     frr_port=179
+    install_frr_k8s $frr_port
   else
-    # external FRR is required for unmanaged mode
-    deploy_frr_external_container
-    deploy_bgp_external_server
+    install_downstream_frr_k8s
   fi
-  install_frr_k8s $frr_port
 fi
 if [ "$KIND_REMOVE_TAINT" == true ]; then
   remove_no_schedule_taint
@@ -668,9 +666,10 @@ fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   # wait for frr-k8s to be ready
-  wait_for_frr_k8s
-  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
-    configure_frr_k8s
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+    wait_for_frr_k8s
+  else
+    wait_for_downstream_frr_k8s
   fi
 fi
 

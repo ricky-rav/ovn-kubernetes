@@ -135,6 +135,7 @@ set_common_default_params() {
   BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.26.0.0/16}
   BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e796::/64}
   BGP_SERVER_HOST_PORT=${BGP_SERVER_HOST_PORT:-18080}
+  FRR_K8S_WORKER_NODES_ONLY=${FRR_K8S_WORKER_NODES_ONLY:-true}
   OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
   OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
   OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
@@ -1166,6 +1167,18 @@ FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
 readonly FRR_EXTERNAL_DEMO_IMAGE=${FRR_DEPLOYED_IMAGE}
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
+# Downstream frr-k8s chart source. Once the chart changes from
+# https://gitlab-master.nvidia.com/sdn/frr-k8s/-/merge_requests/5 merge, switch
+# DOWNSTREAM_FRR_K8S_REF to nv-v0.0.25:
+# https://gitlab-master.nvidia.com/sdn/frr-k8s/-/tree/nv-v0.0.25
+DOWNSTREAM_FRR_K8S_REPO=${DOWNSTREAM_FRR_K8S_REPO:-https://gitlab-master.nvidia.com/sdn/frr-k8s.git}
+DOWNSTREAM_FRR_K8S_REF=${DOWNSTREAM_FRR_K8S_REF:-refs/merge-requests/5/head}
+readonly DOWNSTREAM_FRR_K8S_REPO
+readonly DOWNSTREAM_FRR_K8S_REF
+readonly DOWNSTREAM_FRR_K8S_TMP_DIR=$(mktemp -d -u)
+readonly DOWNSTREAM_FRR_K8S_HELM_RELEASE=frr-k8s
+readonly DOWNSTREAM_FRR_K8S_NAMESPACE=frr-k8s-system
+
 clone_frr() {
   [ -d "$FRR_TMP_DIR" ] || {
     mkdir -p "$FRR_TMP_DIR" && trap 'rm -rf $FRR_TMP_DIR' EXIT
@@ -1416,6 +1429,81 @@ install_frr_k8s() {
     }
   fi
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+}
+
+clone_downstream_frr_k8s() {
+  [ -d "$DOWNSTREAM_FRR_K8S_TMP_DIR" ] || {
+    local repo_dir="${DOWNSTREAM_FRR_K8S_TMP_DIR}/frr-k8s"
+    mkdir -p "$DOWNSTREAM_FRR_K8S_TMP_DIR" && trap 'rm -rf $DOWNSTREAM_FRR_K8S_TMP_DIR' EXIT
+    git init -q "$repo_dir"
+    git -C "$repo_dir" remote add origin "${DOWNSTREAM_FRR_K8S_REPO}"
+    git -C "$repo_dir" fetch --depth 1 origin "${DOWNSTREAM_FRR_K8S_REF}"
+    git -C "$repo_dir" checkout -q --detach FETCH_HEAD
+  }
+}
+
+resolve_downstream_frr_k8s_helm_chart_dir() {
+  local chart_dir
+  chart_dir="${DOWNSTREAM_FRR_K8S_TMP_DIR}/frr-k8s/charts/frr-k8s"
+
+  if [ ! -f "${chart_dir}/Chart.yaml" ]; then
+    echo "frr-k8s Helm chart not found at ${chart_dir}" >&2
+    exit 1
+  fi
+  if [ ! -f "${chart_dir}/values.yaml" ]; then
+    echo "frr-k8s values.yaml not found at ${chart_dir}/values.yaml" >&2
+    exit 1
+  fi
+  if [ ! -f "${chart_dir}/values-images.yaml" ]; then
+    echo "frr-k8s values-images.yaml not found at ${chart_dir}/values-images.yaml" >&2
+    exit 1
+  fi
+  echo "${chart_dir}"
+}
+
+install_downstream_frr_k8s() {
+  echo "Installing downstream frr-k8s with Helm ..."
+
+  if ! command -v helm >/dev/null 2>&1; then
+    echo "helm is required to install downstream frr-k8s"
+    exit 1
+  fi
+
+  local chart_dir
+  clone_downstream_frr_k8s
+  chart_dir=$(resolve_downstream_frr_k8s_helm_chart_dir)
+  echo "Using downstream frr-k8s Helm chart from ${chart_dir}"
+
+  local helm_args=(
+    upgrade --install "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}" "${chart_dir}"
+    --namespace "${DOWNSTREAM_FRR_K8S_NAMESPACE}"
+    --create-namespace
+    -f "${chart_dir}/values.yaml"
+    -f "${chart_dir}/values-images.yaml"
+  )
+
+  # TODO: replace with the label we actually use on our worker nodes downstream
+  if [ "${FRR_K8S_WORKER_NODES_ONLY}" == true ]; then
+    helm_args+=(
+      --set frrk8s.tolerateMaster=false
+      --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=node-role.kubernetes.io/control-plane'
+      --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=DoesNotExist'
+      --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[1].key=node-role.kubernetes.io/master'
+      --set-string 'frrk8s.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[1].operator=DoesNotExist'
+    )
+  fi
+
+  if [ "$RUN_IN_CONTAINER" != true ]; then
+    kind export kubeconfig --name ${KIND_CLUSTER_NAME}
+  fi
+
+  helm "${helm_args[@]}"
+}
+
+# TODO verify whether we use a different namespace downstream, otherwise use wait_for_frr_k8s
+wait_for_downstream_frr_k8s() {
+  kubectl wait -n "${DOWNSTREAM_FRR_K8S_NAMESPACE}" deployment "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}-statuscleaner" --for condition=Available --timeout 2m
+  kubectl rollout status -n "${DOWNSTREAM_FRR_K8S_NAMESPACE}" daemonset "${DOWNSTREAM_FRR_K8S_HELM_RELEASE}" --timeout 2m
 }
 
 wait_for_frr_k8s() {
