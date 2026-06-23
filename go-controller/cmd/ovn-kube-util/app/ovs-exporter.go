@@ -50,8 +50,8 @@ var OvsExporterCommand = cli.Command{
 		certFile := ctx.String("tls-cert-file")
 		keyFile := ctx.String("tls-key-file")
 
-		if err := util.SetSpecificExec(kexec.New(), "ovs-vsctl", "ovs-dpctl",
-			"ovs-ofctl", "ovs-appctl", "ovsdb-client"); err != nil {
+		if err := util.SetSpecificExec(kexec.New(), "ovs-vsctl", "ovs-ofctl",
+			"ovs-appctl", "ovsdb-client"); err != nil {
 			return err
 		}
 
