@@ -882,7 +882,12 @@ install_multus() {
 
 install_mpolicy_crd() {
   echo "Installing multi-network-policy CRD ..."
-  mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/refs/tags/v1.0.1/scheme.yml"
+  # The checked-out OVN-Kubernetes code watches v1beta2; the upstream v1.0.1
+  # scheme keeps that version unserved, so prefer this repo's matching CRD.
+  local mpolicy_manifest="${DIR}/../dist/templates/multinetworkpolicy.yaml.j2"
+  if [ ! -f "$mpolicy_manifest" ]; then
+    mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/refs/tags/v1.0.1/scheme.yml"
+  fi
   run_kubectl apply -f "$mpolicy_manifest"
 }
 
