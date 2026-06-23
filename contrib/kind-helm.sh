@@ -518,6 +518,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set global.extGatewayNetworkInterface=$(if [ "${OVN_SECOND_BRIDGE}" == "true" ]; then echo "eth1"; else echo ""; fi) \
           --set global.disableSnatMultipleGws=$(if [ "${OVN_DISABLE_SNAT_MULTIPLE_GWS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.disableForwarding=$(if [ "${OVN_DISABLE_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.disableFirewalld=$(if [ "${OVNKUBE_DISABLE_FIREWALLD}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.unprivilegedMode=false \
           --set global.metricsIp="${METRICS_IP:-}" \
           --set ovs-node.updateStrategy="${OVS_NODE_UPDATE_STRATEGY:-RollingUpdate}" \
