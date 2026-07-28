@@ -2522,6 +2522,20 @@ func TestAreNetworksCompatible(t *testing.T) {
 			anotherNetwork: &userDefinedNetInfo{macSecurityMode: "enabled"},
 			expectedResult: false,
 		},
+		{
+			desc:                   "noOverlayRouting update",
+			aNetwork:               &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingManaged},
+			anotherNetwork:         &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingUnmanaged},
+			expectedResult:         false,
+			expectationDescription: "we should reconcile on noOverlayRouting updates",
+		},
+		{
+			desc:                   "network without noOverlayRouting is compatible with one that has it",
+			aNetwork:               &userDefinedNetInfo{noOverlayRouting: ""},
+			anotherNetwork:         &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingUnmanaged},
+			expectedResult:         true,
+			expectationDescription: "NADs rendered before noOverlayRouting existed should not trigger a network recreate on upgrade",
+		},
 	}
 
 	for _, test := range tests {
