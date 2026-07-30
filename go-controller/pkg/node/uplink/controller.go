@@ -4,6 +4,7 @@
 package uplink
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -843,6 +844,12 @@ func hostInterfaceStateFromStatus(
 	}, nil
 }
 
+// usableMACAddress reports whether mac can serve as the OVN gateway interface
+// MAC: a non-zero 6-byte Ethernet address.
+func usableMACAddress(mac net.HardwareAddr) bool {
+	return len(mac) == 6 && !bytes.Equal(mac, make(net.HardwareAddr, 6))
+}
+
 func discoveryReason(err error) string {
 	var discoveryErr *discoveryError
 	if errors.As(err, &discoveryErr) {
@@ -914,6 +921,19 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 			fmt.Errorf("host interface %s was not found: %w", hostInterfaceName, err),
 		)
 	}
+	// The MAC becomes the OVN gateway interface MAC, so it must be a
+	// non-zero 6-byte Ethernet address (an InfiniBand or EUI-64 hardware
+	// address would fail the CRD MACAddress validation); without this
+	// guard, discovery would publish Resolved=True and gateway programming
+	// would consume an unusable status.macAddress far away from the actual
+	// problem.
+	macAddress := link.Attrs().HardwareAddr
+	if !usableMACAddress(macAddress) {
+		return nil, newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonInvalidHostInterface,
+			fmt.Errorf("host interface %s has no usable MAC address", hostInterfaceName),
+		)
+	}
 	addrs, err := nodeutil.GetNetworkInterfaceIPAddresses(hostInterfaceName)
 	if err != nil {
 		return nil, newDiscoveryError(
@@ -938,7 +958,7 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 		defaultGateways = append(defaultGateways, route.Gw)
 	}
 	return &hostInterfaceState{
-		macAddress:      link.Attrs().HardwareAddr,
+		macAddress:      macAddress,
 		ipAddresses:     addrs,
 		defaultGateways: defaultGateways,
 	}, nil
