@@ -25,6 +25,7 @@ import (
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -750,6 +751,261 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		}
 	})
 })
+
+// Field managers used by the split DPU/DPU-host Uplink discovery reconcilers.
+// The e2e deliberately does not import the production controller package;
+// keep in sync with go-controller/pkg/node/uplink/controller.go.
+const (
+	uplinkDPUFieldManager     = "ovnkube-node-uplink-controller-dpu"
+	uplinkDPUHostFieldManager = "ovnkube-node-uplink-controller-dpu-host"
+)
+
+var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions", feature.NetworkSegmentation, func() {
+	f := wrappedTestFramework("uplink-conditions")
+	f.SkipNamespaceCreation = true
+
+	var ictx infraapi.Context
+	var ipFamilySet sets.Set[utilnet.IPFamily]
+	var testSuffix string
+
+	ginkgo.BeforeEach(func() {
+		if IsGatewayModeLocal(f.ClientSet) {
+			e2eskipper.Skipf("Uplink CUDN gateway plumbing is only supported in shared gateway mode")
+		}
+		if !isDPUUplinkE2E() {
+			e2eskipper.Skipf("split DPU status condition e2e requires the DPU simulator environment")
+		}
+		ipFamilySet = sets.New(getSupportedIPFamiliesSlice(f.ClientSet)...)
+		ictx = infraprovider.Get().NewTestContext()
+		testSuffix = framework.RandomSuffix()
+	})
+
+	ginkgo.It("keeps one writer per condition and recovers a missing host interface", func() {
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(context.Background(), f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		dpuHostNodes := filterNodesByLabel(schedulableNodes.Items, uplinkDPUHostNodeLabel)
+		gomega.Expect(dpuHostNodes).NotTo(gomega.BeEmpty(), "expected at least one ready schedulable DPU host node")
+		nodeIfaces := collectDPUHostUplinkInterfaces(dpuHostNodes)
+
+		ginkgo.By("resolving an Uplink on the provisioned host interface")
+		uplinkName := "upcond" + testSuffix
+		createUplink(f, ictx, uplinkName, dpuHostNodes, nodeIfaces, "")
+		waitForUplinkStatesResolved(f, uplinkName, os.Getenv(uplinkDPUExpectedBridgeEnv), dpuHostNodes)
+
+		ginkgo.By("verifying each condition has exactly one writer")
+		for _, node := range dpuHostNodes {
+			state, err := getUplinkState(f, uplinkName, node.Name)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(checkUplinkStateCondition(state,
+				uplinkv1alpha1.UplinkStateConditionHostDataReady,
+				metav1.ConditionTrue,
+				uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+			)).To(gomega.Succeed())
+			expectSplitDPUConditionOwners(state)
+		}
+
+		ginkgo.By("pointing an Uplink at a host interface that does not exist")
+		node := dpuHostNodes[0]
+		missingIface := "upe" + testSuffix
+		missingUplink := "upmiss" + testSuffix
+		createUplink(f, ictx, missingUplink, []corev1.Node{node}, nodeIfaces, missingIface)
+
+		gomega.Eventually(func() error {
+			state, err := getUplinkState(f, missingUplink, node.Name)
+			if err != nil {
+				return err
+			}
+			if err := checkUplinkStateCondition(state,
+				uplinkv1alpha1.UplinkStateConditionHostDataReady,
+				metav1.ConditionFalse,
+				uplinkv1alpha1.UplinkStateReasonHostInterfaceNotFound,
+			); err != nil {
+				return err
+			}
+			return checkUplinkStateCondition(state,
+				uplinkv1alpha1.UplinkStateConditionResolved,
+				metav1.ConditionFalse,
+				uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost,
+			)
+		}).WithTimeout(uplinkShortTimeout).WithPolling(uplinkPoll).Should(
+			gomega.Succeed(),
+			"expected the DPU-host to report the missing interface on HostDataReady and the DPU to wait on Resolved",
+		)
+		// The single-writer split must hold in the failure window too: this
+		// unresolved state is where two writers used to overwrite each
+		// other's conditions.
+		state, err := getUplinkState(f, missingUplink, node.Name)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectSplitDPUConditionOwners(state)
+
+		ginkgo.By("creating the host interface and waiting for host discovery to recover")
+		ictx.AddCleanUpFn(func() error {
+			return runNodeCommand(node.Name, "ip link del %s || true", missingIface)
+		})
+		createIface := fmt.Sprintf(
+			"ip link add %[1]s type dummy && ip addr add 192.0.2.1/24 dev %[1]s", missingIface)
+		if ipFamilySet.Has(utilnet.IPv6) {
+			createIface += fmt.Sprintf(" && ip addr add 2001:db8:e2e::1/64 dev %s", missingIface)
+		}
+		createIface += fmt.Sprintf(" && ip link set %s up", missingIface)
+		gomega.Expect(runNodeCommand(node.Name, "%s", createIface)).To(gomega.Succeed())
+
+		gomega.Eventually(func() error {
+			state, err := getUplinkState(f, missingUplink, node.Name)
+			if err != nil {
+				return err
+			}
+			if err := checkUplinkStateCondition(state,
+				uplinkv1alpha1.UplinkStateConditionHostDataReady,
+				metav1.ConditionTrue,
+				uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+			); err != nil {
+				return err
+			}
+			// The DPU consumed the recovered host data: it moved past
+			// WaitingForDPUHost to a bridge discovery verdict of its own.
+			// Which verdict depends on the DPU-side environment (a dummy
+			// interface MAC matches no DPU bridge), so only the transition
+			// is asserted.
+			resolved, err := uplinkStateCondition(state, uplinkv1alpha1.UplinkStateConditionResolved)
+			if err != nil {
+				return err
+			}
+			if resolved.Status != metav1.ConditionFalse ||
+				resolved.Reason == uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost {
+				return fmt.Errorf("UplinkState %s Resolved is %s/%s, expected a DPU-side discovery verdict",
+					state.GetName(), resolved.Status, resolved.Reason)
+			}
+			return nil
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+			gomega.Succeed(),
+			"expected host discovery to recover without a restart and the DPU to consume the new data",
+		)
+
+		state, err = getUplinkState(f, missingUplink, node.Name)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		expectSplitDPUConditionOwners(state)
+
+		ginkgo.By("removing the host interface and waiting for the published host data to be pruned")
+		// Unlike the missing-interface phase above, host data has been
+		// published by now and must be withdrawn, not just flagged: a stale
+		// macAddress would keep feeding the DPU's bridge matching. Link
+		// deletion generates no Kubernetes events and a successful side does
+		// not retry, so force a reconcile with a node label change.
+		gomega.Expect(runNodeCommand(node.Name, "ip link del %s", missingIface)).To(gomega.Succeed())
+		pokeLabel := "e2e.k8s.ovn.org/uplink-poke"
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, node.Name, pokeLabel, testSuffix)
+		ginkgo.DeferCleanup(e2enode.RemoveLabelOffNode, f.ClientSet, node.Name, pokeLabel)
+		gomega.Eventually(func() error {
+			state, err := getUplinkState(f, missingUplink, node.Name)
+			if err != nil {
+				return err
+			}
+			if err := checkUplinkStateCondition(state,
+				uplinkv1alpha1.UplinkStateConditionHostDataReady,
+				metav1.ConditionFalse,
+				uplinkv1alpha1.UplinkStateReasonHostInterfaceNotFound,
+			); err != nil {
+				return err
+			}
+			// Server-side apply removes the host-owned data fields once the
+			// DPU-host stops asserting them.
+			macAddress, _, err := unstructured.NestedString(state.Object, "status", "macAddress")
+			if err != nil {
+				return err
+			}
+			if macAddress != "" {
+				return fmt.Errorf("UplinkState %s still reports macAddress %q for the removed interface",
+					state.GetName(), macAddress)
+			}
+			return nil
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+			gomega.Succeed(),
+			"expected the host-owned data fields to be pruned once discovery fails",
+		)
+	})
+})
+
+func uplinkStateCondition(state *unstructured.Unstructured, conditionType string) (*metav1.Condition, error) {
+	conditions, err := getConditions(state)
+	if err != nil {
+		return nil, err
+	}
+	condition := meta.FindStatusCondition(conditions, conditionType)
+	if condition == nil {
+		return nil, fmt.Errorf("UplinkState %s has no %s condition", state.GetName(), conditionType)
+	}
+	return condition, nil
+}
+
+func checkUplinkStateCondition(
+	state *unstructured.Unstructured,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason string,
+) error {
+	condition, err := uplinkStateCondition(state, conditionType)
+	if err != nil {
+		return err
+	}
+	if condition.Status != status || condition.Reason != reason {
+		return fmt.Errorf("UplinkState %s condition %s is %s/%s, expected %s/%s",
+			state.GetName(), conditionType,
+			condition.Status, condition.Reason, status, reason)
+	}
+	return nil
+}
+
+// uplinkStateConditionOwners returns the field managers owning the given
+// condition entry in the UplinkState's managedFields.
+func uplinkStateConditionOwners(state *unstructured.Unstructured, conditionType string) ([]string, error) {
+	typeKey, err := json.Marshal(conditionType)
+	if err != nil {
+		return nil, err
+	}
+	key := fmt.Sprintf(`k:{"type":%s}`, typeKey)
+	var owners []string
+	for _, entry := range state.GetManagedFields() {
+		if entry.FieldsV1 == nil {
+			continue
+		}
+		var entryFields map[string]interface{}
+		if err := json.Unmarshal(entry.FieldsV1.GetRawBytes(), &entryFields); err != nil {
+			return nil, err
+		}
+		status, ok := entryFields["f:status"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		conditions, ok := status["f:conditions"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, ok := conditions[key]; ok {
+			owners = append(owners, entry.Manager)
+		}
+	}
+	return owners, nil
+}
+
+func expectUplinkStateConditionOwner(state *unstructured.Unstructured, conditionType string, manager string) {
+	ginkgo.GinkgoHelper()
+	owners, err := uplinkStateConditionOwners(state, conditionType)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(owners).To(gomega.ConsistOf(manager),
+		"expected condition %s of UplinkState %s to have a single writer",
+		conditionType, state.GetName())
+}
+
+// expectSplitDPUConditionOwners asserts the single-writer split: the DPU-host
+// field manager owns HostDataReady and the DPU one owns Resolved.
+func expectSplitDPUConditionOwners(state *unstructured.Unstructured) {
+	ginkgo.GinkgoHelper()
+	expectUplinkStateConditionOwner(state,
+		uplinkv1alpha1.UplinkStateConditionHostDataReady, uplinkDPUHostFieldManager)
+	expectUplinkStateConditionOwner(state,
+		uplinkv1alpha1.UplinkStateConditionResolved, uplinkDPUFieldManager)
+}
 
 func runDPUUplinkVRFLiteRouteAdvertisements(
 	f *framework.Framework,
