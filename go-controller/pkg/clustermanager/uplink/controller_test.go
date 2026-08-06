@@ -43,7 +43,8 @@ func TestUplinkControllerReportsMissingSelectedNodeState(t *testing.T) {
 	)
 
 	stateName := uplinkutil.StateName("br-blue", "node-a")
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	_, err := client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
 		context.Background(),
@@ -125,7 +126,8 @@ func TestUplinkControllerReportsBoundedPartialFailureSummary(t *testing.T) {
 		newResolvedUplinkState("br-blue", "node-e", "br-blue"),
 	)
 
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	ready := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionReady)
 	g.Expect(ready).To(gomega.And(
@@ -150,7 +152,8 @@ func TestUplinkControllerSummarizesSelectorAndStateFailures(t *testing.T) {
 		uplink,
 	)
 
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	ready := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionReady)
 	g.Expect(ready).To(gomega.And(
@@ -172,7 +175,8 @@ func TestUplinkControllerReportsUplinkStateSpecIdentityError(t *testing.T) {
 		state,
 	)
 
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	ready := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionReady)
 	g.Expect(ready).To(gomega.And(
@@ -244,7 +248,8 @@ func TestUplinkControllerReportsOverlappingSelectors(t *testing.T) {
 			},
 		},
 	)
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	cond := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionReady)
 	g.Expect(cond).To(gomega.And(
@@ -397,7 +402,8 @@ func TestUplinkControllerRequeuesReferencedCUDNOnUplinkReconcile(t *testing.T) {
 		controllerutil.Stop(controller.cudnController)
 	})
 
-	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink("br-blue")).To(
+		gomega.MatchError(gomega.ContainSubstring("Ready is False")))
 
 	g.Eventually(reconciledCUDNs).Should(gomega.Receive(gomega.Equal("blue")))
 }

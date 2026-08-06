@@ -134,6 +134,7 @@ func NewController(
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkInformer().Informer(),
 		Lister:         c.uplinkLister.List,
 		Reconcile:      c.reconcileUplink,
@@ -147,6 +148,7 @@ func NewController(
 
 	uplinkStateCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkStateInformer().Informer(),
 		Lister:         c.uplinkStateLister.List,
 		Reconcile:      c.reconcileUplinkState,
@@ -160,6 +162,7 @@ func NewController(
 
 	cudnCfg := &controllerutil.ControllerConfig[udnv1.ClusterUserDefinedNetwork]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.ClusterUserDefinedNetworkInformer().Informer(),
 		Lister:         c.cudnLister.List,
 		Reconcile:      c.reconcileCUDN,
@@ -173,6 +176,7 @@ func NewController(
 
 	nodeCfg := &controllerutil.ControllerConfig[corev1.Node]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         c.nodeLister.List,
 		Reconcile:      c.reconcileNode,
@@ -186,6 +190,7 @@ func NewController(
 
 	networkRefCfg := &controllerutil.ReconcilerConfig{
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts: controllerutil.InfiniteAttempts,
 		Reconcile:   c.reconcileNetworkRef,
 		Threadiness: 1,
 	}
@@ -307,7 +312,7 @@ func (c *Controller) reconcileUplink(key string) error {
 			return err
 		}
 		c.reconcileCUDNNames(referencingCUDNs)
-		return nil
+		return readyReconcileResult(uplink, metav1.ConditionFalse, reasonInvalidSpec)
 	}
 
 	readyStatus, readyReason, readyMessage := c.readyCondition(
@@ -320,7 +325,19 @@ func (c *Controller) reconcileUplink(key string) error {
 		return err
 	}
 	c.reconcileCUDNNames(referencingCUDNs)
-	return nil
+	return readyReconcileResult(uplink, readyStatus, readyReason)
+}
+
+// readyReconcileResult turns the Ready condition just published into the
+// reconcile result: a not-ready Uplink becomes an error so the controller
+// keeps retrying with backoff instead of leaving the reported failure
+// terminal until an unrelated watch event.
+func readyReconcileResult(uplink *uplinkv1alpha1.Uplink, status metav1.ConditionStatus, reason string) error {
+	if status == metav1.ConditionTrue {
+		return nil
+	}
+	return fmt.Errorf("uplink %s: %s is %s (%s)",
+		uplink.Name, uplinkv1alpha1.UplinkConditionReady, status, reason)
 }
 
 func (c *Controller) reconcileUplinkState(key string) error {

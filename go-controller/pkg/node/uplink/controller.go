@@ -11,8 +11,10 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -97,6 +99,17 @@ type Controller struct {
 	nodeController        controllerutil.Controller
 }
 
+// discoveryRateLimiter is the default controller rate limiter with its
+// exponential backoff capped at 30s instead of 1000s: retries re-poll
+// admin-owned host and OVS state, so the cap bounds how long discovery
+// takes to notice an admin fix.
+func discoveryRateLimiter() workqueue.TypedRateLimiter[string] {
+	return workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](5*time.Millisecond, 30*time.Second),
+		&workqueue.TypedBucketRateLimiter[string]{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+	)
+}
+
 // NewController creates an ovnkube-node Uplink controller.
 func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client,
 ) *Controller {
@@ -111,7 +124,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	}
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkInformer().Informer(),
 		Lister:         c.uplinkLister.List,
 		Reconcile:      c.reconcileUplink,
@@ -124,7 +138,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	)
 
 	uplinkStateCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkStateInformer().Informer(),
 		Lister:         c.uplinkStateLister.List,
 		Reconcile:      c.reconcileUplinkState,
@@ -137,7 +152,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	)
 
 	nodeCfg := &controllerutil.ControllerConfig[corev1.Node]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         c.nodeLister.List,
 		Reconcile:      c.reconcileNode,
@@ -499,7 +515,7 @@ func (c *Controller) updateUplinkStateStatus(
 	condition := statusCondition(state, status, reason, message)
 	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
 	if reflect.DeepEqual(state.Status, desiredStatus) {
-		return nil
+		return statusReconcileResult(state, status, reason, message)
 	}
 
 	statusApply := uplinkapply.UplinkStateStatus().
@@ -543,7 +559,28 @@ func (c *Controller) updateUplinkStateStatus(
 		return fmt.Errorf("failed to update UplinkState %s status: %w",
 			state.Name, err)
 	}
-	return nil
+	return statusReconcileResult(state, status, reason, message)
+}
+
+// statusReconcileResult turns the condition this side just published into the
+// reconcile result: a False condition becomes an error, even when the status
+// write was a no-op, so the controller re-polls the discovery inputs with
+// rate-limited backoff. The inputs live in netlink and OVSDB, which generate
+// no Kubernetes events, so these retries are the only re-poll.
+//
+// TODO: subscribe to netlink and OVSDB events and reconcile on relevant
+// changes instead of polling through retries.
+func statusReconcileResult(
+	state *uplinkv1alpha1.UplinkState,
+	status metav1.ConditionStatus,
+	reason string,
+	message string,
+) error {
+	if status == metav1.ConditionTrue {
+		return nil
+	}
+	return fmt.Errorf("UplinkState %s: %s is %s (%s): %s",
+		state.Name, statusConditionType(), status, reason, message)
 }
 
 func desiredUplinkStateStatus(
