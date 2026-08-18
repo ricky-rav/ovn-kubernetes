@@ -1271,6 +1271,18 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
+		if udng.shouldEnslaveUplinkGatewayToVRF() {
+			// Remove the managed default route before enslaving the Uplink
+			// gateway interface: enslavement preserves the interface's
+			// pre-existing routes into the VRF table, and a still-managed
+			// default route with the same key would otherwise clobber the
+			// preserved default route, or absorb its addition only to be
+			// removed right after.
+			if err := udng.removeDefaultRouteFromVRF(); err != nil {
+				return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",
+					vrfDeviceName, udng.GetNetworkName(), err)
+			}
+		}
 		if err := udng.reconcileUplinkGatewayVRFSlave(vrfDeviceName); err != nil {
 			return err
 		}

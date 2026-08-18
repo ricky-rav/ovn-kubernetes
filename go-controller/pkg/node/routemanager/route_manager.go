@@ -211,10 +211,18 @@ func validateAndNormalizeRoute(r *netlink.Route) (*netlink.Route, error) {
 	// same route as reported by the kernel in events and dumps, breaking
 	// event-driven restore and making sync() re-add the route every period.
 	// Normalize the priority so the store key matches the kernel's view.
-	if r.Priority == 0 && isIPv6Route(r) {
-		r.Priority = ipv6DefaultRouteMetric
-	}
+	r.Priority = KernelRoutePriority(r)
 	return r, nil
+}
+
+// KernelRoutePriority returns the route priority as the kernel reports it:
+// an IPv6 route added without an explicit priority gets the kernel user
+// default (IP6_RT_PRIO_USER, 1024), an IPv4 route keeps 0.
+func KernelRoutePriority(r *netlink.Route) int {
+	if r.Priority == 0 && isIPv6Route(r) {
+		return ipv6DefaultRouteMetric
+	}
+	return r.Priority
 }
 
 func isIPv6Route(r *netlink.Route) bool {
