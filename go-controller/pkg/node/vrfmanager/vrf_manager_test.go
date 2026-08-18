@@ -380,6 +380,108 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkDelete", buildVRF(vrfLinkName1))
 		})
 
+		ginkgo.It("retries failed route restores on reconcile", func() {
+			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
+			table := getVRFTable(vrfLinkName1)
+			migratedRoute := netlink.Route{
+				LinkIndex: slaveLinkIndex,
+				Gw:        net.ParseIP("192.168.1.1"),
+				Protocol:  unix.RTPROT_DHCP,
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			transientErr := fmt.Errorf("transient netlink error")
+			nlMock.On("IsAlreadyExistsError", transientErr).Return(false)
+			nlMock.On("RouteAdd", mock.Anything).Return(transientErr).Once()
+			nlMock.On("RouteAdd", mock.Anything).Return(nil)
+
+			// The restore fails and the route is queued for retry.
+			c.restoreRoutesToTable([]netlink.Route{migratedRoute}, table, nil)
+			gomega.Expect(c.pendingRouteRestores).To(gomega.HaveLen(1))
+			gomega.Expect(c.pendingRouteRestores[0].route.Table).To(gomega.Equal(int(table)))
+
+			// The retry succeeds and drains the queue.
+			c.retryPendingRouteRestores()
+			gomega.Expect(c.pendingRouteRestores).To(gomega.BeEmpty())
+			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 2)
+		})
+
+		ginkgo.It("drops queued route restores once their interface is gone, keeps them while it exists", func() {
+			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
+			table := getVRFTable(vrfLinkName1)
+			migratedRoute := netlink.Route{
+				LinkIndex: slaveLinkIndex,
+				Gw:        net.ParseIP("192.168.1.1"),
+				Protocol:  unix.RTPROT_DHCP,
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			restoreErr := fmt.Errorf("transient netlink error")
+			nlMock.On("IsAlreadyExistsError", restoreErr).Return(false)
+			nlMock.On("RouteAdd", mock.Anything).Return(restoreErr)
+			// While the interface exists, a failing restore stays queued.
+			nlMock.On("LinkByIndex", slaveLinkIndex).Return(enslaveLinkMock1, nil).Once()
+			// IsLinkNotFoundError is mocked to return true in BeforeEach.
+			nlMock.On("LinkByIndex", slaveLinkIndex).Return(nil, fmt.Errorf("link not found"))
+
+			c.restoreRoutesToTable([]netlink.Route{migratedRoute}, table, nil)
+			gomega.Expect(c.pendingRouteRestores).To(gomega.HaveLen(1))
+
+			c.retryPendingRouteRestores()
+			gomega.Expect(c.pendingRouteRestores).To(gomega.HaveLen(1))
+
+			c.retryPendingRouteRestores()
+			gomega.Expect(c.pendingRouteRestores).To(gomega.BeEmpty())
+			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 3)
+		})
+
+		ginkgo.It("gives up on a queued route restore after too many attempts", func() {
+			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
+			restoreErr := fmt.Errorf("permanent netlink error")
+			nlMock.On("IsAlreadyExistsError", restoreErr).Return(false)
+			nlMock.On("RouteAdd", mock.Anything).Return(restoreErr)
+			nlMock.On("LinkByIndex", slaveLinkIndex).Return(enslaveLinkMock1, nil)
+
+			c.pendingRouteRestores = []pendingRouteRestore{{
+				route: netlink.Route{
+					LinkIndex: slaveLinkIndex,
+					Gw:        net.ParseIP("192.168.1.1"),
+					Table:     int(getVRFTable(vrfLinkName1)),
+				},
+				attempts: maxRouteRestoreAttempts - 1,
+			}}
+			c.retryPendingRouteRestores()
+			gomega.Expect(c.pendingRouteRestores).To(gomega.BeEmpty())
+		})
+
+		ginkgo.It("retargets queued route restores when the interface changes master", func() {
+			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
+			vrfTable := int(getVRFTable(vrfLinkName1))
+			nlMock.On("LinkList").Return([]netlink.Link{buildVRF(vrfLinkName1), enslaveLinkMock1}, nil)
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: 0, Index: slaveLinkIndex}, nil)
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+			nlMock.On("LinkSetMaster", enslaveLinkMock1, buildVRF(vrfLinkName1)).Return(nil)
+			nlMock.On("RouteAdd", mock.Anything).Return(nil)
+
+			// A restore into the main table failed on a previous release.
+			pendingRoute := netlink.Route{
+				LinkIndex: slaveLinkIndex,
+				Gw:        net.ParseIP("192.168.1.1"),
+				Protocol:  unix.RTPROT_DHCP,
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			c.pendingRouteRestores = []pendingRouteRestore{{route: pendingRoute}}
+
+			// Enslaving the interface folds the queued route into the batch
+			// restored into the VRF table instead of leaving it queued
+			// against the table the interface left.
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), nil)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(c.pendingRouteRestores).To(gomega.BeEmpty())
+			expectedRoute := pendingRoute
+			expectedRoute.Table = vrfTable
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedRoute)
+			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 1)
+		})
+
 		ginkgo.It("fails if we add a VRF with a long name", func() {
 			err := c.AddVRF("this.name.is.too.long", "other", 0, nil)
 			gomega.Expect(err).Should(gomega.HaveOccurred())

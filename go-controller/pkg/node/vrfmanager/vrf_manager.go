@@ -56,7 +56,23 @@ type Controller struct {
 	mu           *sync.Mutex
 	vrfs         map[int]vrf
 	routeManager *routemanager.Controller
+	// pendingRouteRestores holds routes whose restore failed after a master
+	// change, to be retried on reconcile and on link events. The failed
+	// in-memory capture is the only remaining copy of the route: the kernel
+	// purged the original when the master changed.
+	pendingRouteRestores []pendingRouteRestore
 }
+
+// pendingRouteRestore is a route whose restore failed, with the route's
+// target table already set, and the number of restore attempts made so far.
+type pendingRouteRestore struct {
+	route    netlink.Route
+	attempts int
+}
+
+// maxRouteRestoreAttempts bounds the retries of a failed route restore so
+// that a permanently unaddable route does not stay queued forever.
+const maxRouteRestoreAttempts = 10
 
 func NewController(routeManager *routemanager.Controller) *Controller {
 	return &Controller{
@@ -182,6 +198,8 @@ func (vrfm *Controller) reconcile() error {
 		errorAggregate = append(errorAggregate, fmt.Errorf("error repairing VRFs: %v", err))
 	}
 
+	vrfm.retryPendingRouteRestores()
+
 	if len(errorAggregate) > 0 {
 		return utilerrors.Join(errorAggregate...)
 	}
@@ -192,6 +210,9 @@ func (vrfm *Controller) reconcile() error {
 func (vrfm *Controller) syncVRF(link netlink.Link) error {
 	vrfm.mu.Lock()
 	defer vrfm.mu.Unlock()
+	// Sustained link events keep deferring the periodic reconcile, so drain
+	// queued route restores from here as well.
+	defer vrfm.retryPendingRouteRestores()
 	vrf, ok := vrfm.vrfs[link.Attrs().Index]
 	if !ok {
 		return nil
@@ -252,7 +273,7 @@ func (vrfm *Controller) sync(vrf vrf) error {
 			return fmt.Errorf("failed to check if %s is slave of VRF device %s, err: %v", managedSlave, vrfLink.Attrs().Name, err)
 		}
 		if !alreadyEnslaved {
-			if err = enslaveInterfaceToVRF(vrf.name, managedSlave, vrf.table); err != nil {
+			if err = vrfm.enslaveInterfaceToVRF(vrf.name, managedSlave, vrf.table); err != nil {
 				return fmt.Errorf("failed to enslave interface %s into VRF device: %s, err: %v", managedSlave, vrf.name, err)
 			}
 		}
@@ -382,7 +403,7 @@ func (vrfm *Controller) DeleteVRFSlave(name string, slaveInterface string) error
 	if !ok {
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
-	if err = releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index, vrfDev.table, vrfDev.routes); err != nil {
+	if err = vrfm.releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index, vrfDev.table, vrfDev.routes); err != nil {
 		return fmt.Errorf("failed to release interface %s from VRF %s, err: %v",
 			slaveInterface, name, err)
 	}
@@ -562,7 +583,7 @@ func (vrfm *Controller) deleteVRF(link netlink.Link) error {
 		if l.Attrs().MasterIndex != vrfLink.Index {
 			continue
 		}
-		if err := releaseInterfaceFromVRF(l.Attrs().Name, vrfLink.Index, vrfLink.Table, managedRoutes); err != nil {
+		if err := vrfm.releaseInterfaceFromVRF(l.Attrs().Name, vrfLink.Index, vrfLink.Table, managedRoutes); err != nil {
 			errs = append(errs, fmt.Errorf("failed to release interface %s from VRF %s, err: %w",
 				l.Attrs().Name, vrfLink.Name, err))
 		}
@@ -587,7 +608,7 @@ func isInterfaceSlaveOfVRF(ifName string, vrfIndex int) (bool, error) {
 	return link.Attrs().MasterIndex == vrfIndex, nil
 }
 
-func enslaveInterfaceToVRF(vrfName, ifName string, table uint32) error {
+func (vrfm *Controller) enslaveInterfaceToVRF(vrfName, ifName string, table uint32) error {
 	klog.V(5).Infof("Enslaving interface %s to VRF: %s", ifName, vrfName)
 	iface, err := util.GetNetLinkOps().LinkByName(ifName)
 	if err != nil {
@@ -606,15 +627,18 @@ func enslaveInterfaceToVRF(vrfName, ifName string, table uint32) error {
 	if err != nil {
 		return fmt.Errorf("failed to list routes of interface %s before enslaving to VRF %s: %v", ifName, vrfName, err)
 	}
+	// Queued restores of this interface target the table it is leaving:
+	// retarget them by folding them into this restore batch.
+	routes = append(routes, vrfm.takePendingRouteRestores(iface.Attrs().Index)...)
 	err = util.GetNetLinkOps().LinkSetMaster(iface, vrfLink)
 	if err != nil {
 		return fmt.Errorf("failed to enslave interface %s to VRF %s: %v", ifName, vrfName, err)
 	}
-	restoreRoutesToTable(routes, table, nil)
+	vrfm.restoreRoutesToTable(routes, table, nil)
 	return nil
 }
 
-func releaseInterfaceFromVRF(ifName string, vrfIndex int, table uint32, ovnManagedRoutes []netlink.Route) error {
+func (vrfm *Controller) releaseInterfaceFromVRF(ifName string, vrfIndex int, table uint32, ovnManagedRoutes []netlink.Route) error {
 	iface, err := util.GetNetLinkOps().LinkByName(ifName)
 	if err != nil {
 		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
@@ -634,10 +658,13 @@ func releaseInterfaceFromVRF(ifName string, vrfIndex int, table uint32, ovnManag
 	if err != nil {
 		return fmt.Errorf("failed to list routes of interface %s before releasing from VRF: %v", ifName, err)
 	}
+	// Queued restores of this interface target the table it is leaving:
+	// retarget them by folding them into this restore batch.
+	routes = append(routes, vrfm.takePendingRouteRestores(iface.Attrs().Index)...)
 	if err = util.GetNetLinkOps().LinkSetNoMaster(iface); err != nil {
 		return err
 	}
-	restoreRoutesToTable(routes, unix.RT_TABLE_MAIN, ovnManagedRoutes)
+	vrfm.restoreRoutesToTable(routes, unix.RT_TABLE_MAIN, ovnManagedRoutes)
 	return nil
 }
 
@@ -692,10 +719,10 @@ func sameRouteKey(a, b netlink.Route) bool {
 // restoreRoutesToTable re-adds routes into the given routing table, preserving
 // all their attributes. Routes that their owner reprograms per routing table
 // are skipped, and so are the excluded routes. Failure to restore a route is
-// logged rather than returned: restore is a best effort one shot operation
-// tied to the master change that just happened, retrying the enslavement
-// would not re-attempt it.
-func restoreRoutesToTable(routes []netlink.Route, table uint32, excluded []netlink.Route) {
+// logged and the route is queued for retry on reconcile: the enslavement
+// itself is not retried since it already succeeded, and the in-memory capture
+// is the only remaining copy of the route.
+func (vrfm *Controller) restoreRoutesToTable(routes []netlink.Route, table uint32, excluded []netlink.Route) {
 	isExcluded := func(route netlink.Route) bool {
 		for _, excludedRoute := range excluded {
 			if sameRouteKey(route, excludedRoute) {
@@ -704,8 +731,25 @@ func restoreRoutesToTable(routes []netlink.Route, table uint32, excluded []netli
 		}
 		return false
 	}
-	// Restore routes without a gateway first: a gateway route is only
-	// accepted once the route covering its gateway is in place.
+	for _, route := range sortRoutesForRestore(routes) {
+		if shouldSkipRouteMigration(route) || isExcluded(route) {
+			continue
+		}
+		route.Table = int(table)
+		// Keep only the configuration flags relevant to route installation:
+		// the kernel rejects requests that carry its own state flags, e.g.
+		// RTNH_F_LINKDOWN captured from a carrier-down interface.
+		route.Flags &= unix.RTNH_F_ONLINK
+		if done, err := tryRestoreRoute(route); !done {
+			klog.Warningf("VRF Manager: failed to restore route %v into table %d, will retry: %v", route, table, err)
+			vrfm.queueRouteRestore(route)
+		}
+	}
+}
+
+// sortRoutesForRestore orders routes without a gateway first: a gateway route
+// is only accepted once the route covering its gateway is in place.
+func sortRoutesForRestore(routes []netlink.Route) []netlink.Route {
 	routes = slices.Clone(routes)
 	slices.SortStableFunc(routes, func(a, b netlink.Route) int {
 		gatewayRoutes := func(r netlink.Route) int {
@@ -716,21 +760,102 @@ func restoreRoutesToTable(routes []netlink.Route, table uint32, excluded []netli
 		}
 		return gatewayRoutes(a) - gatewayRoutes(b)
 	})
-	for _, route := range routes {
-		if shouldSkipRouteMigration(route) || isExcluded(route) {
-			continue
-		}
-		route.Table = int(table)
-		// Keep only the configuration flags relevant to route installation:
-		// the kernel rejects requests that carry its own state flags, e.g.
-		// RTNH_F_LINKDOWN captured from a carrier-down interface.
-		route.Flags &= unix.RTNH_F_ONLINK
-		if err := addRouteWithRetry(&route); err != nil && !util.GetNetLinkOps().IsAlreadyExistsError(err) {
-			klog.Warningf("VRF Manager: failed to restore route %v into table %d: %v", route, table, err)
-			continue
-		}
-		klog.V(5).Infof("VRF Manager: restored route %v into table %d", route, table)
+	return routes
+}
+
+// tryRestoreRoute adds the route into its table. It returns true when there
+// is nothing left to do for the route: it was added, or its slot in the table
+// is already occupied, in which case adding is impossible and replacing could
+// clobber a route we do not own.
+func tryRestoreRoute(route netlink.Route) (bool, error) {
+	err := addRouteWithRetry(&route)
+	if err == nil {
+		klog.V(5).Infof("VRF Manager: restored route %v into table %d", route, route.Table)
+		return true, nil
 	}
+	if util.GetNetLinkOps().IsAlreadyExistsError(err) {
+		klog.V(5).Infof("VRF Manager: not restoring route %v into table %d: its slot is already occupied", route, route.Table)
+		return true, nil
+	}
+	return false, err
+}
+
+// queueRouteRestore remembers a route whose restore failed so that it is
+// retried later, keeping the latest capture when an entry with the same
+// identity is already queued. Expiring routes are not queued: their owner
+// refreshes them, and re-adding one later would wrongly extend its lifetime.
+// Must be called with the controller mutex held.
+func (vrfm *Controller) queueRouteRestore(route netlink.Route) {
+	if route.Expires > 0 {
+		klog.Warningf("VRF Manager: not queueing restore of expiring route %v", route)
+		return
+	}
+	vrfm.pendingRouteRestores = slices.DeleteFunc(vrfm.pendingRouteRestores, func(pending pendingRouteRestore) bool {
+		return pending.route.Table == route.Table && sameRouteKey(pending.route, route)
+	})
+	vrfm.pendingRouteRestores = append(vrfm.pendingRouteRestores, pendingRouteRestore{route: route})
+}
+
+// takePendingRouteRestores removes and returns the queued routes of the given
+// interface. The enslave and release paths call it before changing the
+// interface's master: the queued routes target the routing table the
+// interface is leaving, so the caller folds them into its own restore batch
+// toward the new table instead of letting a later retry install them into a
+// table the interface is no longer part of. Must be called with the
+// controller mutex held.
+func (vrfm *Controller) takePendingRouteRestores(linkIndex int) []netlink.Route {
+	var taken []netlink.Route
+	vrfm.pendingRouteRestores = slices.DeleteFunc(vrfm.pendingRouteRestores, func(pending pendingRouteRestore) bool {
+		if pending.route.LinkIndex != linkIndex {
+			return false
+		}
+		taken = append(taken, pending.route)
+		return true
+	})
+	return taken
+}
+
+// retryPendingRouteRestores re-attempts route restores that failed, e.g.
+// because of a transient netlink error. An entry is dropped once there is
+// nothing left to do for it, when the interface it references is gone, at
+// which point the route is unrecoverable, or after too many attempts. Must be
+// called with the controller mutex held.
+func (vrfm *Controller) retryPendingRouteRestores() {
+	if len(vrfm.pendingRouteRestores) == 0 {
+		return
+	}
+	// gateway routes last, as in the original restore
+	slices.SortStableFunc(vrfm.pendingRouteRestores, func(a, b pendingRouteRestore) int {
+		gatewayRoutes := func(p pendingRouteRestore) int {
+			if len(p.route.Gw) > 0 {
+				return 1
+			}
+			return 0
+		}
+		return gatewayRoutes(a) - gatewayRoutes(b)
+	})
+	kept := vrfm.pendingRouteRestores[:0]
+	for _, pending := range vrfm.pendingRouteRestores {
+		done, err := tryRestoreRoute(pending.route)
+		if done {
+			continue
+		}
+		if _, linkErr := util.GetNetLinkOps().LinkByIndex(pending.route.LinkIndex); linkErr != nil &&
+			util.GetNetLinkOps().IsLinkNotFoundError(linkErr) {
+			klog.Warningf("VRF Manager: dropping restore of route %v: its interface is gone", pending.route)
+			continue
+		}
+		pending.attempts++
+		if pending.attempts >= maxRouteRestoreAttempts {
+			klog.Errorf("VRF Manager: giving up on restoring route %v into table %d after %d attempts, last error: %v",
+				pending.route, pending.route.Table, pending.attempts, err)
+			continue
+		}
+		klog.Warningf("VRF Manager: failed to restore route %v into table %d, will retry: %v",
+			pending.route, pending.route.Table, err)
+		kept = append(kept, pending)
+	}
+	vrfm.pendingRouteRestores = kept
 }
 
 const (
