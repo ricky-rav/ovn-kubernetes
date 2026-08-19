@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -1091,6 +1092,13 @@ func SetRPFilterLooseModeForInterface(ifName string) error {
 
 // SetIPv6KeepAddrOnDownForInterface preserves global IPv6 addresses when an
 // interface changes state while it is attached to or detached from a VRF.
+// IsIPv6SysctlSupported reports whether the kernel exposes IPv6 sysctls: a
+// kernel with IPv6 disabled (ipv6.disable=1) has no /proc/sys/net/ipv6 tree.
+func IsIPv6SysctlSupported() bool {
+	_, err := os.Stat("/proc/sys/net/ipv6")
+	return err == nil
+}
+
 func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
 	setVal := fmt.Sprintf("net.ipv6.conf.%s.keep_addr_on_down = 1", sysctlIfName(ifName))
 	stdout, stderr, err := RunSysctl("-w", setVal)

@@ -521,6 +521,16 @@ func (udng *UserDefinedNetworkGateway) addNetwork() error {
 		if err = udng.vrfManager.AddVRF(vrfDeviceName, mplink.Attrs().Name, uint32(udng.vrfTableId), nil); err != nil {
 			return fmt.Errorf("could not add VRF %d for network %s, err: %v", udng.vrfTableId, udng.GetNetworkName(), err)
 		}
+		if udng.shouldEnslaveUplinkGatewayToVRF() {
+			// Remove the managed default route before enslaving the Uplink
+			// gateway interface, so that it cannot clobber the pre-existing
+			// default route preserved across the enslavement; see the same
+			// guard in doReconcile.
+			if err := udng.removeManagedDefaultRoutesFromVRF(); err != nil {
+				return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",
+					vrfDeviceName, udng.GetNetworkName(), err)
+			}
+		}
 		if err = udng.reconcileUplinkGatewayVRFSlave(vrfDeviceName); err != nil {
 			return err
 		}
@@ -1271,6 +1281,18 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
+		if udng.shouldEnslaveUplinkGatewayToVRF() {
+			// Remove the managed default route before enslaving the Uplink
+			// gateway interface: enslavement preserves the interface's
+			// pre-existing routes into the VRF table, and a still-managed
+			// default route with the same key would otherwise clobber the
+			// preserved default route, or absorb its addition only to be
+			// removed right after.
+			if err := udng.removeManagedDefaultRoutesFromVRF(); err != nil {
+				return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",
+					vrfDeviceName, udng.GetNetworkName(), err)
+			}
+		}
 		if err := udng.reconcileUplinkGatewayVRFSlave(vrfDeviceName); err != nil {
 			return err
 		}
@@ -1348,7 +1370,12 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceN
 	}
 
 	if udng.shouldEnslaveUplinkGatewayToVRF() {
-		if config.IPv6Mode {
+		// Whenever the kernel supports IPv6, regardless of the cluster IP
+		// families: enslavement captures and restores routes of both
+		// families, and without this sysctl the kernel flushes the
+		// interface's IPv6 addresses on the master change, making any
+		// captured IPv6 route fail its restore.
+		if util.IsIPv6SysctlSupported() {
 			if err := util.SetIPv6KeepAddrOnDownForInterface(udng.gwInterfaceName); err != nil {
 				return newUplinkGatewayError(
 					uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
@@ -1414,7 +1441,7 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute() error {
 	switch {
 	case udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF:
 		// Remove default route for networks advertised to non-default VRF
-		if err := udng.removeDefaultRouteFromVRF(); err != nil {
+		if err := udng.removeManagedDefaultRoutesFromVRF(); err != nil {
 			return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",
 				vrfName, udng.GetNetworkName(), err)
 		}
@@ -1438,13 +1465,48 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute() error {
 	return nil
 }
 
-func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
+// removeManagedDefaultRoutesFromVRF removes the OVN-Kubernetes-managed
+// default routes from the network's VRF table. A managed default route only
+// belongs in the VRF while the network follows the default routing domain:
+//
+//   - The host's own default route (typically DHCP-provided, not ours) is the
+//     next hop OVN uses to leave via the gateway bridge.
+//   - Networks that follow the default routing domain get a managed *copy* of
+//     that route in their VRF table, so their traffic leaks into it.
+//   - Networks advertised to their own VRF with an Uplink instead have the
+//     Uplink interface's own default route *migrated* into the VRF table by
+//     the enslavement, unmanaged; the managed copy must be removed first so
+//     that it cannot clobber the migrated route.
+//
+// The routes to remove are matched in the kernel by the OVN-Kubernetes
+// protocol rather than recomputed from the current gateway interface, so that
+// a route installed for a previous gateway interface is removed as well.
+func (udng *UserDefinedNetworkGateway) removeManagedDefaultRoutesFromVRF() error {
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
-	defaultRoute, err := udng.getDefaultRoute()
+	filter := &netlink.Route{Table: udng.vrfTableId}
+	routes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_TABLE)
 	if err != nil {
-		return fmt.Errorf("unable to get default route for network %s, err: %v", udng.GetNetworkName(), err)
+		return fmt.Errorf("unable to list routes of VRF table %d for network %s, err: %v",
+			udng.vrfTableId, udng.GetNetworkName(), err)
 	}
-	if err = udng.vrfManager.DeleteVRFRoutes(vrfDeviceName, defaultRoute); err != nil {
+	var managedDefaultRoutes []netlink.Route
+	for _, route := range routes {
+		if int(route.Protocol) != types.OVNKProtocol || len(route.Gw) == 0 || route.Dst != nil && route.Dst.IP != nil && !route.Dst.IP.IsUnspecified() {
+			continue
+		}
+		// The kernel reports a default route with a nil destination; the
+		// tracked routes carry the explicit any CIDR of their family.
+		_, anyCIDR, _ := net.ParseCIDR("0.0.0.0/0")
+		if utilnet.IsIPv6(route.Gw) {
+			_, anyCIDR, _ = net.ParseCIDR("::/0")
+		}
+		route.Dst = anyCIDR
+		managedDefaultRoutes = append(managedDefaultRoutes, route)
+	}
+	if len(managedDefaultRoutes) == 0 {
+		return nil
+	}
+	if err = udng.vrfManager.DeleteVRFRoutes(vrfDeviceName, managedDefaultRoutes); err != nil {
 		return fmt.Errorf("unable to delete routes for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	return nil
