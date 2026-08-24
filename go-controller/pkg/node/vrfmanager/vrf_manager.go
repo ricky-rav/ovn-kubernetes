@@ -299,8 +299,8 @@ func (vrfm *Controller) AddVRF(name string, slaveInterface string, table uint32,
 	vrfm.mu.Lock()
 	defer vrfm.mu.Unlock()
 
-	if len(name) > 15 {
-		return fmt.Errorf("VRF Manager: VRF name %s must be within 15 characters", name)
+	if len(name) > types.MaxInterfaceNameLength {
+		return fmt.Errorf("VRF Manager: VRF name %s must be within %d characters", name, types.MaxInterfaceNameLength)
 	}
 	if table < uint32(config.OvnKubeNode.RoutingTableIDStart) {
 		return fmt.Errorf("VRF Manager: cannot manage a VRF %s with table %d lower than %d", name, table, config.OvnKubeNode.RoutingTableIDStart)
