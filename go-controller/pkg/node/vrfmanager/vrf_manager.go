@@ -395,7 +395,16 @@ func (vrfm *Controller) DeleteVRFSlave(name string, slaveInterface string) error
 	if !ok {
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
-	if err = releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index, vrfDev.table); err != nil {
+	vrf, isVRF := vrfLink.(*netlink.Vrf)
+	if !isVRF {
+		return fmt.Errorf("node has another non VRF device with same name %s, refusing to release its slave %s",
+			name, slaveInterface)
+	}
+	// Release from the table the device actually uses: the cache holds the
+	// desired table id, which can differ from the actual one (recreation on
+	// table conflict), and a release with the wrong table would capture no
+	// routes while LinkSetNoMaster purges the real ones unrestored.
+	if err = releaseInterfaceFromVRF(slaveInterface, vrf.Index, vrf.Table); err != nil {
 		return fmt.Errorf("failed to release interface %s from VRF %s, err: %v",
 			slaveInterface, name, err)
 	}
