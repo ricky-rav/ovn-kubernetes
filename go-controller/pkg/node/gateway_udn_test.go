@@ -444,6 +444,88 @@ func TestGetDefaultRouteDoesNotFallBackForUplinkWithoutNextHops(t *testing.T) {
 	}
 }
 
+func TestUplinkDefaultRoutesPreserveMultipleNextHops(t *testing.T) {
+	prepareUplinkGatewayControllerTest(t)
+	config.IPv4Mode, config.IPv6Mode = true, true
+	netInfo, err := util.ParseNADInfo(generateUplinkNAD("blue", "blue-nad", "test",
+		types.Layer3Topology, "10.200.0.0/16/24,2001:db8:100::/60/64", types.NetworkRolePrimary, "uplink1"))
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+	udng := &UserDefinedNetworkGateway{
+		NetInfo: netInfo, gwInterfaceIndex: 7, vrfTableId: 1005,
+		nextHops: ovntest.MustParseIPs("192.0.2.1", "192.0.2.2", "2001:db8::1", "2001:db8::2", "192.0.2.1"),
+	}
+	routes, err := udng.getDefaultRoute()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(routes).To(HaveLen(2))
+	for i, prefix := range []string{"0.0.0.0/0", "::/0"} {
+		g.Expect(routes[i].Dst.String()).To(Equal(prefix))
+		g.Expect(routes[i].Table).To(Equal(1005))
+		g.Expect(routes[i].Gw).To(BeNil())
+		g.Expect(routes[i].LinkIndex).To(BeZero())
+		g.Expect(routes[i].MultiPath).To(HaveLen(2))
+		for j, nextHop := range routes[i].MultiPath {
+			g.Expect(nextHop.LinkIndex).To(Equal(7))
+			g.Expect(nextHop.Gw.Equal(udng.nextHops[2*i+j])).To(BeTrue())
+		}
+	}
+	udng.nextHops = ovntest.MustParseIPs("192.0.2.2", "2001:db8::2")
+	routes, err = udng.getDefaultRoute()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(routes).To(HaveLen(2))
+	for i, route := range routes {
+		g.Expect(route.MultiPath).To(BeEmpty())
+		g.Expect(route.LinkIndex).To(Equal(7))
+		g.Expect(route.Gw.Equal(udng.nextHops[i])).To(BeTrue())
+	}
+}
+
+func TestRemoveManagedMultipathDefaultRoutes(t *testing.T) {
+	prepareUplinkGatewayControllerTest(t)
+	g := NewWithT(t)
+	netInfo := uplinkGatewayNetInfo(t, "blue", "uplink1")
+	vrfName := util.GetNetworkVRFName(netInfo)
+	netlinkOps := utilmocks.NewNetLinkOps(t)
+	util.SetNetLinkOpMockInst(netlinkOps)
+	t.Cleanup(util.ResetNetLinkOpMockInst)
+	link := &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: vrfName, Index: 9, OperState: netlink.OperUp}, Table: 1005}
+	netlinkOps.On("LinkByName", vrfName).Return(link, nil)
+	netlinkOps.On("IsLinkNotFoundError", nil).Return(false)
+	netlinkOps.On("RouteReplace", mock.Anything).Return(nil)
+	vrfm := vrfmanager.NewController(routemanager.NewController())
+	var routes []netlink.Route
+	for _, gateway := range ovntest.MustParseIPs("192.0.2.1", "2001:db8::1") {
+		prefix, family := "0.0.0.0/0", netlink.FAMILY_V4
+		if gateway.To4() == nil {
+			prefix, family = "::/0", netlink.FAMILY_V6
+		}
+		routes = append(routes, netlink.Route{
+			Table: 1005, Dst: ovntest.MustParseIPNet(prefix), Family: family,
+			Protocol:  types.OVNKProtocol,
+			MultiPath: []*netlink.NexthopInfo{{LinkIndex: 7, Gw: gateway}},
+		})
+	}
+	g.Expect(vrfm.AddVRF(vrfName, "", 1005, routes)).To(Succeed())
+	for i := range routes {
+		route := routes[i]
+		// The kernel can encode either family's default with a nil Dst.
+		routes[i].Dst = nil
+		netlinkOps.On("RouteDel", mock.MatchedBy(func(got *netlink.Route) bool {
+			return got.Table == route.Table && got.Dst.String() == route.Dst.String() &&
+				got.Protocol == types.OVNKProtocol && len(got.MultiPath) == 1
+		})).Return(nil).Once()
+	}
+	// Neither an unmanaged default nor a managed non-default route belongs to this cleanup.
+	routes = append(routes,
+		netlink.Route{Table: 1005, Gw: net.ParseIP("192.0.2.9"), Protocol: unix.RTPROT_STATIC},
+		netlink.Route{Table: 1005, Dst: ovntest.MustParseIPNet("192.0.2.0/24"), Gw: net.ParseIP("192.0.2.9"), Protocol: types.OVNKProtocol},
+	)
+	netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL, &netlink.Route{Table: 1005}, uint64(netlink.RT_FILTER_TABLE)).Return(routes, nil)
+	udng := &UserDefinedNetworkGateway{NetInfo: netInfo, vrfManager: vrfm, vrfTableId: 1005}
+	g.Expect(udng.removeManagedDefaultRoutesFromVRF()).To(Succeed())
+	netlinkOps.AssertNumberOfCalls(t, "RouteDel", 2)
+}
+
 func getDeletionFakeOVSCommands(fexec *ovntest.FakeExec, mgtPort string) {
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgtPort,
