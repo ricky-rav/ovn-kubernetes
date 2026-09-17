@@ -357,6 +357,84 @@ func TestOpenFlowManagerKeepsExistingUplinkBridgeOnCleanupFailure(t *testing.T) 
 	}
 }
 
+func TestCheckPortsReportsChangedPhysPort(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	ovsClient := newUplinkBridgeOVSClient(t, map[string]struct {
+		physIntf string
+		ofport   int
+	}{"uup1": {physIntf: "eth2", ofport: 1}})
+
+	if err := checkPorts(ovsClient, nil, "eth2", "1"); err != nil {
+		t.Fatalf("expected matching phys port ofport to pass, got %v", err)
+	}
+	if err := checkPorts(ovsClient, nil, "eth2", "7"); !errors.Is(err, errBridgePortChanged) {
+		t.Fatalf("expected a changed phys port ofport to report errBridgePortChanged, got %v", err)
+	}
+	if err := checkPorts(ovsClient, nil, "eth3", "1"); !errors.Is(err, errBridgePortChanged) {
+		t.Fatalf("expected a missing phys port to report errBridgePortChanged, got %v", err)
+	}
+}
+
+// A stale physical port never terminates ovnkube-node. The bridge is dropped
+// only when its OVS bridge is gone; a surviving bridge keeps its flow and
+// group ownership and only skips its flow sync.
+func TestOpenFlowManagerHandlesStaleUplinkBridgePorts(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	healthy := newOpenflowBridge(bridgeconfig.TestUplinkBridgeConfig("uup1", "eth2", "1"))
+	replugged := newOpenflowBridge(bridgeconfig.TestUplinkBridgeConfig("uup2", "eth3", "1"))
+	deleted := newOpenflowBridge(bridgeconfig.TestUplinkBridgeConfig("uup3", "eth4", "1"))
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges: map[string]*openflowBridge{"uup1": healthy, "uup2": replugged, "uup3": deleted},
+		ovsClient: newUplinkBridgeOVSClient(t, map[string]struct {
+			physIntf string
+			ofport   int
+		}{
+			"uup1": {physIntf: "eth2", ofport: 1},
+			"uup2": {physIntf: "eth3", ofport: 7},
+		}),
+	}
+
+	for i := 0; i < 2; i++ {
+		failedChecks := ofm.checkUplinkBridgePorts()
+		if _, failed := failedChecks["uup2"]; !failed || len(failedChecks) != 1 {
+			t.Fatalf("expected only the stale surviving bridge to skip its flow sync, got %v", failedChecks)
+		}
+	}
+	if _, found := ofm.getUplinkBridge("uup3"); found {
+		t.Fatal("expected uplink bridge whose OVS bridge is gone to be dropped")
+	}
+	if bridge, found := ofm.getUplinkBridge("uup2"); !found || bridge != replugged {
+		t.Fatal("expected surviving uplink bridge with a stale phys port to stay registered")
+	}
+	if _, found := ofm.getUplinkBridge("uup1"); !found {
+		t.Fatal("expected healthy uplink bridge to stay registered")
+	}
+	// Requested syncs skip the stale bridge too, until a check passes again.
+	if stale := ofm.staleUplinkBridgeSnapshot(); len(stale) != 1 {
+		t.Fatalf("expected only uup2 to be remembered as stale, got %v", stale)
+	} else if _, ok := stale["uup2"]; !ok {
+		t.Fatalf("expected uup2 to be remembered as stale, got %v", stale)
+	}
+	ofm.ovsClient = newUplinkBridgeOVSClient(t, map[string]struct {
+		physIntf string
+		ofport   int
+	}{
+		"uup1": {physIntf: "eth2", ofport: 1},
+		"uup2": {physIntf: "eth3", ofport: 1},
+	})
+	if failedChecks := ofm.checkUplinkBridgePorts(); len(failedChecks) != 0 {
+		t.Fatalf("expected the restored port to pass the check, got %v", failedChecks)
+	}
+	if stale := ofm.staleUplinkBridgeSnapshot(); len(stale) != 0 {
+		t.Fatalf("expected no stale bridge after a passing check, got %v", stale)
+	}
+}
+
 func TestOpenFlowManagerDeletesGroupCacheWithFlowCache(t *testing.T) {
 	ofm := &openflowManager{
 		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
