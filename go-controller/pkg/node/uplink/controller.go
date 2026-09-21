@@ -1167,7 +1167,7 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 				hostInterfaceName, err),
 		)
 	}
-	routes, err := hostInterfaceRoutes(link)
+	routes, err := settledHostInterfaceRoutes(link)
 	if err != nil {
 		return nil, newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
@@ -1214,6 +1214,30 @@ func discoverHostFunction(hostInterfaceName string) *uplinkv1alpha1.HostFunction
 	klog.V(5).Infof("No host function for host interface %s: not a VF (%v), not a PF (%v)",
 		hostInterfaceName, vfErr, pfErr)
 	return nil
+}
+
+// settledHostInterfaceRoutes dumps the host interface's routes and repeats
+// the dump once if the interface changed master meanwhile. Enslaving the
+// interface to a VRF, or releasing it, purges its routes from one table
+// before restoring them in the other, so a dump that samples the FIB inside
+// that window misses the default route: publishing the resulting empty
+// gateway list would remove the programmed defaults until the next poll.
+func settledHostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
+	routes, err := hostInterfaceRoutes(link)
+	if err != nil {
+		return nil, err
+	}
+	current, err := util.GetNetLinkOps().LinkByName(link.Attrs().Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-read %s after listing its routes: %w",
+			link.Attrs().Name, err)
+	}
+	if current.Attrs().MasterIndex == link.Attrs().MasterIndex {
+		return routes, nil
+	}
+	klog.V(4).Infof("Host interface %s changed master from %d to %d while listing its routes, listing again",
+		link.Attrs().Name, link.Attrs().MasterIndex, current.Attrs().MasterIndex)
+	return hostInterfaceRoutes(current)
 }
 
 // hostInterfaceRoutes lists the routes of the table that holds the host

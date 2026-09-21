@@ -1250,6 +1250,58 @@ func TestHostInterfaceRoutes(t *testing.T) {
 	})
 }
 
+func TestSettledHostInterfaceRoutes(t *testing.T) {
+	const vrfIndex, vrfTable = 9, 1005
+	vrf := &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "mp1005", Index: vrfIndex}, Table: vrfTable}
+	standalone := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7}}
+	enslaved := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7, MasterIndex: vrfIndex}}
+	defaultRoute := []netlink.Route{{LinkIndex: 7, Gw: ovntest.MustParseIP("192.0.2.1")}}
+	tableFilter := func(table int) *netlink.Route { return &netlink.Route{Table: table} }
+
+	for _, tt := range []struct {
+		name           string
+		before, after  netlink.Link
+		emptiedTable   int
+		restoringTable int
+	}{
+		{"enslaved to the VRF during the dump", standalone, enslaved, unix.RT_TABLE_MAIN, vrfTable},
+		{"released from the VRF during the dump", enslaved, standalone, vrfTable, unix.RT_TABLE_MAIN},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netlinkOps := utilmocks.NewNetLinkOps(t)
+			util.SetNetLinkOpMockInst(netlinkOps)
+			t.Cleanup(util.ResetNetLinkOpMockInst)
+			netlinkOps.On("LinkByIndex", vrfIndex).Return(vrf, nil)
+			// The routes were purged from the first table and not yet
+			// restored in the second one when the first dump ran.
+			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+				tableFilter(tt.emptiedTable), uint64(netlink.RT_FILTER_TABLE)).Return([]netlink.Route{}, nil).Once()
+			netlinkOps.On("LinkByName", "enp3s0v0").Return(tt.after, nil).Once()
+			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+				tableFilter(tt.restoringTable), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
+
+			routes, err := settledHostInterfaceRoutes(tt.before)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(routes).To(gomega.Equal(defaultRoute))
+		})
+	}
+
+	t.Run("unchanged master keeps the first dump", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netlinkOps := utilmocks.NewNetLinkOps(t)
+		util.SetNetLinkOpMockInst(netlinkOps)
+		t.Cleanup(util.ResetNetLinkOpMockInst)
+		netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			tableFilter(unix.RT_TABLE_MAIN), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
+		netlinkOps.On("LinkByName", "enp3s0v0").Return(standalone, nil).Once()
+
+		routes, err := settledHostInterfaceRoutes(standalone)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(routes).To(gomega.Equal(defaultRoute))
+	})
+}
+
 func TestDefaultGatewaysForLink(t *testing.T) {
 	tests := []struct {
 		name     string
