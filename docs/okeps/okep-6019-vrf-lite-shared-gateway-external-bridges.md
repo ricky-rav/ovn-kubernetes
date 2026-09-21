@@ -385,7 +385,9 @@ moving the common gateway fields under `ovsBridge`.
   interface is enslaved to a VRF, the main table otherwise. This maps to `next-hops` in the existing `l3-gateway-config`
   shape when internal compatibility requires it. If no default route exists, this field can be empty; the Uplink still
   resolves, no condition degrades, and egress can still work for destinations covered by BGP-learned routes imported by
-  OVN-Kubernetes. Platform monitoring can alert on an empty field where a default gateway is expected. Host route
+  OVN-Kubernetes. Only gateways carried inline by the route are read: a default route through a kernel nexthop object
+  (`nhid`, as installed by FRR when `net.ipv4.nexthop_compat_mode` is `0`) is skipped with a warning and leaves the
+  field empty. Platform monitoring can alert on an empty field where a default gateway is expected. Host route
   changes generate netlink events, but those events do not currently enqueue Uplink discovery. Discovery therefore
   polls the host routes at a fixed interval while any addressed IP family lacks a default gateway, publishing newly
   discovered gateways for use as default route next hops on the OVN gateway router. With VRF-Lite (`targetVRF: auto`),
