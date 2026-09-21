@@ -1302,7 +1302,15 @@ func defaultGatewaysForLink(routes []netlink.Route, linkIndex int) []net.IP {
 			addNextHop(&netlink.NexthopInfo{LinkIndex: route.LinkIndex, Gw: route.Gw}, route.Priority)
 			continue
 		}
-		// TODO: Resolve next-hop IDs (nhid) when routes omit gateway IPs.
+		// A route through a nexthop object (net.ipv4.nexthop_compat_mode=0,
+		// FRR on kernels >= 5.3) carries neither gateway nor interface
+		// inline, so it cannot be matched against the link here.
+		// TODO: resolve route.NHID through netlink NexthopList.
+		if route.NHID != 0 && route.Gw == nil && len(route.MultiPath) == 0 {
+			klog.V(4).Infof("Uplink gateway discovery skips default route via nexthop object %d (metric %d): "+
+				"nexthop-object routes are not resolved", route.NHID, route.Priority)
+			continue
+		}
 		for _, nexthop := range route.MultiPath {
 			addNextHop(nexthop, route.Priority)
 		}

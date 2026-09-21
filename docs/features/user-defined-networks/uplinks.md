@@ -199,6 +199,11 @@ themselves do not traverse host routing. An `UplinkState` with an empty
 on the host interface; discovery keeps re-polling the host routes (in the
 interface's VRF routing table when it is enslaved to a VRF) while an addressed
 IP family lacks a gateway, and publishes newly discovered default gateways.
+Discovery only reads gateways carried inline by the route, single-path or
+multipath. A default route through a kernel nexthop object (`nhid`, as
+installed by FRR when `net.ipv4.nexthop_compat_mode` is `0`) carries none, so
+it is skipped with a warning in the ovnkube-node log and leaves
+`status.defaultGateways` empty even though a default route exists.
 Discovery selects the lowest-metric defaults per IP family through the selected
 host interface, including embedded multipath next hops. When those next hops
 carry unequal weights, only the heaviest ones are kept: neither `UplinkState`

@@ -1275,10 +1275,10 @@ func TestSettledHostInterfaceRoutes(t *testing.T) {
 			netlinkOps.On("LinkByIndex", vrfIndex).Return(vrf, nil)
 			// The routes were purged from the first table and not yet
 			// restored in the second one when the first dump ran.
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				tableFilter(tt.emptiedTable), uint64(netlink.RT_FILTER_TABLE)).Return([]netlink.Route{}, nil).Once()
 			netlinkOps.On("LinkByName", "enp3s0v0").Return(tt.after, nil).Once()
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				tableFilter(tt.restoringTable), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
 
 			routes, err := settledHostInterfaceRoutes(tt.before)
@@ -1292,7 +1292,7 @@ func TestSettledHostInterfaceRoutes(t *testing.T) {
 		netlinkOps := utilmocks.NewNetLinkOps(t)
 		util.SetNetLinkOpMockInst(netlinkOps)
 		t.Cleanup(util.ResetNetLinkOpMockInst)
-		netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+		netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 			tableFilter(unix.RT_TABLE_MAIN), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
 		netlinkOps.On("LinkByName", "enp3s0v0").Return(standalone, nil).Once()
 
@@ -1349,6 +1349,15 @@ func TestDefaultGatewaysForLink(t *testing.T) {
 				{MultiPath: []*netlink.NexthopInfo{{LinkIndex: 6}}},
 			},
 			expected: []net.IP{},
+		},
+		{
+			name: "nexthop object default routes are not resolved",
+			routes: []netlink.Route{
+				{NHID: 12},
+				{NHID: 13, Priority: 100},
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1"), NHID: 14},
+			},
+			expected: ovntest.MustParseIPs("192.0.2.1"),
 		},
 		{
 			name: "lowest metric per family with equal-metric ties",
