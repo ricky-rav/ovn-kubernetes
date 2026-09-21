@@ -1360,6 +1360,15 @@ func TestDefaultGatewaysForLink(t *testing.T) {
 			expected: ovntest.MustParseIPs("192.0.2.1"),
 		},
 		{
+			name: "ovnkube-managed default routes are not host gateways",
+			routes: []netlink.Route{
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1"), Protocol: ovntypes.OVNKProtocol},
+				{LinkIndex: 6, Gw: net.ParseIP("2001:db8::1"), Protocol: ovntypes.OVNKProtocol},
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.2"), Protocol: unix.RTPROT_STATIC},
+			},
+			expected: ovntest.MustParseIPs("192.0.2.2"),
+		},
+		{
 			name: "lowest metric per family with equal-metric ties",
 			routes: []netlink.Route{
 				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.3"), Priority: 200},

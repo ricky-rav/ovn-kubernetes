@@ -1295,7 +1295,10 @@ func defaultGatewaysForLink(routes []netlink.Route, linkIndex int) []net.IP {
 		}
 	}
 	for _, route := range routes {
-		if !isDefaultRoute(route) {
+		// ovnkube installs its own default in the network VRF table, marked
+		// with its protocol: that route is derived from the published
+		// gateways and must never be read back as one of them.
+		if !isDefaultRoute(route) || int(route.Protocol) == ovntypes.OVNKProtocol {
 			continue
 		}
 		if route.LinkIndex == linkIndex && route.Gw != nil {
