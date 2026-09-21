@@ -1195,7 +1195,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 		t.Cleanup(util.ResetNetLinkOpMockInst)
 
 		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7}}
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: unix.RT_TABLE_MAIN},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1217,7 +1217,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 			LinkAttrs: netlink.LinkAttrs{Name: "mp1005", Index: 9},
 			Table:     1005,
 		}, nil)
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: 1005},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1238,7 +1238,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 		netlinkOps.On("LinkByIndex", 9).Return(&netlink.Bond{
 			LinkAttrs: netlink.LinkAttrs{Name: "bond0", Index: 9},
 		}, nil)
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: unix.RT_TABLE_MAIN},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1466,7 +1466,7 @@ func TestNodeUplinkControllerPublishesHeaviestGatewayWeights(t *testing.T) {
 			netlinkOps.On("AddrList", link, netlink.FAMILY_ALL).Return([]netlink.Addr{
 				{IPNet: ovntest.MustParseIPNet("192.0.2.10/24")},
 			}, nil)
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				&netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE).Return([]netlink.Route{
 				{MultiPath: []*netlink.NexthopInfo{
 					{LinkIndex: 7, Gw: net.ParseIP("192.0.2.1"), Hops: 3},
@@ -1533,7 +1533,7 @@ func TestNetlinkHostInterfaceDiscovererDefaultGatewayLimit(t *testing.T) {
 			}
 			// Duplicate next hops from separate routes must not consume slots.
 			routes = append(routes, routes...)
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				&netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE).Return(routes, nil)
 
 			state, err := netlinkHostInterfaceDiscoverer{}.Discover("breth0")

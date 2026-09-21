@@ -1246,7 +1246,9 @@ func settledHostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
 // the main table otherwise. The dump filters by table only and leaves
 // matching the interface to the caller: a multipath route carries an output
 // interface and gateway per nexthop and none at the route level, so an OIF
-// filter drops it entirely.
+// filter drops it entirely. The strict dump has the kernel apply the table
+// filter: this runs every re-poll interval while an uplink lacks a gateway,
+// and must not deserialize the whole FIB each time.
 func hostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
 	table := unix.RT_TABLE_MAIN
 	if masterIndex := link.Attrs().MasterIndex; masterIndex != 0 {
@@ -1259,7 +1261,7 @@ func hostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
 			table = int(vrf.Table)
 		}
 	}
-	return util.GetNetLinkOps().RouteListFiltered(
+	return util.GetNetLinkOps().RouteListFilteredStrict(
 		netlink.FAMILY_ALL,
 		&netlink.Route{Table: table},
 		netlink.RT_FILTER_TABLE,
