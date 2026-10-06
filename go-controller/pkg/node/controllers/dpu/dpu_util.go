@@ -30,6 +30,9 @@ import (
 type dpuConnectionState struct {
 	vfRepName string
 	sandboxId string
+	// revalidate is set on a port rebuilt from OVS that the pod does not
+	// already report ready, so it exists but may not be fully configured.
+	revalidate bool
 }
 
 // podDPUState holds the per-NAD state of a single pod, along with the UID of the
@@ -41,7 +44,7 @@ type podDPUState struct {
 }
 
 func (c *Controller) addDPUPodForNAD(pod *corev1.Pod, state *dpuConnectionState,
-	netInfo util.NetInfo, nadKey string, getter cni.PodInfoGetter) error {
+	netInfo util.NetInfo, nadKey string, getter cni.PodInfoGetter, isRevalidation bool) error {
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
 	klog.Infof("Adding %s on DPU", podDesc)
 	podInterfaceInfo, err := cni.PodAnnotation2PodInfo(pod.Annotations, nil,
@@ -49,7 +52,7 @@ func (c *Controller) addDPUPodForNAD(pod *corev1.Pod, state *dpuConnectionState,
 	if err != nil {
 		return fmt.Errorf("failed to get pod interface information of %s: %w", podDesc, err)
 	}
-	err = c.addRepPort(pod, state, podInterfaceInfo, getter)
+	err = c.addRepPort(pod, state, podInterfaceInfo, getter, isRevalidation)
 	if err != nil {
 		return fmt.Errorf("failed to add rep port for %s: %w", podDesc, err)
 	}
@@ -150,6 +153,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 	// First clean up NADs that existed before but are either not desired or updated.
 	var validPortsToDelete []string
 	var nadsToUntrack []string
+	revalidating := map[string]*dpuConnectionState{}
 	nadsToKeep := make(map[string]*dpuConnectionState, len(ps.nadStates))
 	for nadKey, state := range ps.nadStates {
 		desired, exists := desiredNADs[nadKey]
@@ -163,6 +167,19 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 				validPortsToDelete = append(validPortsToDelete, state.vfRepName)
 			}
 			nadsToUntrack = append(nadsToUntrack, nadKey)
+			continue
+		}
+		if state.revalidate {
+			// ConfigureOVS adds the port before it sets the representor up, so
+			// a port recovered from OVS may have been left half configured.
+			// Untracking it runs ConfigureOVS again, which is idempotent, while
+			// keeping the status the pod already carries. The port predates this
+			// reconcile and may well be carrying traffic, so it is left in place
+			// if that run fails instead of being deleted and built again.
+			klog.Infof("Revalidating VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
+			nadsToKeep[nadKey] = state
+			nadsToUntrack = append(nadsToUntrack, nadKey)
+			revalidating[nadKey] = state
 			continue
 		}
 		if _, err := libovsdbops.GetOVSInterface(c.ovsClient, state.vfRepName); err != nil {
@@ -209,8 +226,16 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 		if _, ok := ps.nadStates[nadKey]; ok {
 			continue
 		}
-		if err := c.addDPUPodForNAD(pod, desired.state, desired.netInfo, nadKey, clientSet); err != nil {
+		recovered, isRevalidation := revalidating[nadKey]
+		if err := c.addDPUPodForNAD(pod, desired.state, desired.netInfo, nadKey, clientSet,
+			isRevalidation); err != nil {
 			klog.Errorf("Error adding pod %s NAD %s: %v", podKey, nadKey, err)
+			if isRevalidation {
+				// Keep the recovered state tracked, since the port was left in
+				// place: the retry revalidates it again, and a teardown in
+				// between still finds the port to delete.
+				ps.nadStates[nadKey] = recovered
+			}
 			errs = append(errs, err)
 			continue
 		}
@@ -221,8 +246,8 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 }
 
 // reconcileDPUConnStatus makes the pod's connection status annotation match the
-// NADs tracked for it: every tracked NAD is reported ready, every other entry
-// is removed.
+// NADs tracked for it: every tracked NAD whose port is confirmed is reported
+// ready, every other entry is removed.
 func (c *Controller) reconcileDPUConnStatus(pod *corev1.Pod, podKey string, tracked map[string]*dpuConnectionState) error {
 	currentStatus, err := util.UnmarshalPodDPUConnStatusAllNetworks(pod.Annotations)
 	if err != nil {
@@ -230,7 +255,13 @@ func (c *Controller) reconcileDPUConnStatus(pod *corev1.Pod, podKey string, trac
 	}
 
 	statusMap := map[string]*util.DPUConnectionStatus{}
-	for nadKey := range tracked {
+	for nadKey, state := range tracked {
+		if state.revalidate {
+			// Nothing confirms this port yet, so leave the status as it is
+			// rather than claim a representor that may still be down.
+			// addRepPort reports it ready once the configuration completes.
+			continue
+		}
 		if status, ok := currentStatus[nadKey]; !ok || status.Status != util.DPUConnectionStatusReady {
 			statusMap[nadKey] = &util.DPUConnectionStatus{Status: util.DPUConnectionStatusReady}
 		}
@@ -302,8 +333,11 @@ func (c *Controller) handleDeleteDPUPod(podKey string, pod *corev1.Pod) error {
 	return nil
 }
 
-// addRepPort adds the representor of the VF to the ovs bridge
-func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifInfo *cni.PodInterfaceInfo, getter cni.PodInfoGetter) error {
+// addRepPort adds the representor of the VF to the ovs bridge. isRevalidation
+// says the port was recovered after a restart rather than created here, and is
+// kept rather than deleted again if the configuration fails.
+func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifInfo *cni.PodInterfaceInfo,
+	getter cni.PodInfoGetter, isRevalidation bool) error {
 
 	nadKey := ifInfo.NADKey
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
@@ -322,8 +356,10 @@ func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifIn
 	err = cni.ConfigureOVS(ctx, c.ovsClient, pod.Namespace, pod.Name, "", state.vfRepName, ifInfo, state.sandboxId,
 		deviceID, false, getter)
 	if err != nil {
-		// Note(adrianc): we are lenient with cleanup in this method as pod is going to be retried anyway.
-		_ = c.delRepPort(pod, state, nadKey)
+		if !isRevalidation {
+			// Note(adrianc): we are lenient with cleanup in this method as pod is going to be retried anyway.
+			_ = c.delRepPort(pod, state, nadKey)
+		}
 		return err
 	}
 	klog.Infof("Port %s added to bridge br-int", state.vfRepName)
@@ -333,7 +369,9 @@ func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifIn
 	statusMap := map[string]*util.DPUConnectionStatus{nadKey: {Status: util.DPUConnectionStatusReady, Reason: ""}}
 	err = util.UpdatePodDPUConnStatusWithRetry(c.podLister, c.kube, pod, statusMap)
 	if err != nil && !util.IsAnnotationAlreadySetError(err) {
-		_ = c.delRepPort(pod, state, nadKey)
+		if !isRevalidation {
+			_ = c.delRepPort(pod, state, nadKey)
+		}
 		return fmt.Errorf("failed to update connection status annotation for %s: %w", podDesc, err)
 	}
 	return nil

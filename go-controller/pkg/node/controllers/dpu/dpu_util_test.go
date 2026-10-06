@@ -230,7 +230,7 @@ var _ = Describe("Node DPU tests", func() {
 			sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return("", fmt.Errorf("could not find PCI Address"))
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			err := ctrl.addRepPort(&pod, state, ifInfo, clientset)
+			err := ctrl.addRepPort(&pod, state, ifInfo, clientset, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("could not find PCI Address"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -259,7 +259,7 @@ var _ = Describe("Node DPU tests", func() {
 
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			err := ctrl.addRepPort(&pod, state, ifInfo, clientset)
+			err := ctrl.addRepPort(&pod, state, ifInfo, clientset, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to run ovs command"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -294,9 +294,38 @@ var _ = Describe("Node DPU tests", func() {
 			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
+			err = ctrl.addRepPort(&pod, state, ifInfo, clientset, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("was added for iface-id"))
+			expectOVSPortAndInterfaceAbsent(ctrl.ovsClient, vfRep)
+			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
+		})
+
+		It("Keeps the representor port when revalidating", func() {
+			sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return(vfPciAddress, nil)
+
+			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-int-uuid"}},
+					&vswitchd.Bridge{UUID: "br-int-uuid", Name: "br-int", Ports: []string{"vfrep-port-uuid"}},
+					&vswitchd.Port{UUID: "vfrep-port-uuid", Name: vfRep, Interfaces: []string{"vfrep-iface-uuid"}},
+					&vswitchd.Interface{
+						UUID:        "vfrep-iface-uuid",
+						Name:        vfRep,
+						ExternalIDs: map[string]string{"iface-id": "someone-else"},
+					},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer ovsCleanup.Cleanup()
+			ctrl.ovsClient = ovsClient
+
+			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
+
+			err = ctrl.addRepPort(&pod, state, ifInfo, clientset, true)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("was added for iface-id"))
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, vfRep)
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
 
@@ -350,7 +379,7 @@ var _ = Describe("Node DPU tests", func() {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(nil)
 
-				err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
+				err = ctrl.addRepPort(&pod, state, ifInfo, clientset, false)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -370,7 +399,7 @@ var _ = Describe("Node DPU tests", func() {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(fmt.Errorf("failed to set pod annotations"))
 
-				err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
+				err = ctrl.addRepPort(&pod, state, ifInfo, clientset, false)
 				Expect(err).To(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -496,6 +525,82 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(ps.nadStates).To(HaveKey(udnNADKey))
 			Expect(ps.nadStates[udnNADKey].vfRepName).To(Equal("pf0vf10"))
 			Expect(ps.nadStates[udnNADKey].sandboxId).To(Equal("sb2"))
+		})
+
+		It("Revalidates a representor the pod does not report ready", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_a-pod", ifaceIDVer: "uid-1"},
+			})
+			defer cleanup()
+
+			// Nothing reported the NAD ready, so the configuration may have
+			// been interrupted part way.
+			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "a-pod", Namespace: "foo-ns", UID: "uid-1",
+			}}
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{existingPod}, nil)
+
+			Expect(ctrl.bootstrapDPUPodMapFromOVS()).To(Succeed())
+
+			ps, ok := ctrl.podStates.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(ps.nadStates[types.DefaultNetworkName].revalidate).To(BeTrue())
+		})
+
+		It("Trusts a representor the pod already reports ready", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_a-pod", ifaceIDVer: "uid-1"},
+			})
+			defer cleanup()
+
+			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "a-pod", Namespace: "foo-ns", UID: "uid-1",
+			}}
+			var err error
+			existingPod.Annotations, err = util.MarshalPodDPUConnStatus(nil,
+				map[string]*util.DPUConnectionStatus{
+					types.DefaultNetworkName: {Status: util.DPUConnectionStatusReady},
+				})
+			Expect(err).ToNot(HaveOccurred())
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{existingPod}, nil)
+
+			Expect(ctrl.bootstrapDPUPodMapFromOVS()).To(Succeed())
+
+			ps, ok := ctrl.podStates.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(ps.nadStates[types.DefaultNetworkName].revalidate).To(BeFalse())
+		})
+
+		It("Trusts a UDN representor the pod already reports ready", func() {
+			udnNADKey := "ns1/nad1"
+			udnPrefix := util.GetUserDefinedNetworkPrefix(udnNADKey)
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{
+					name: "pf0vf10", sandbox: "sb2", vfNetdevName: "pf0vf10",
+					ifaceID: udnPrefix + "foo-ns_a-pod", ifaceIDVer: "uid-2",
+					nadKey: udnNADKey,
+				},
+			})
+			defer cleanup()
+
+			// The status and the OVS external id are keyed the same way, so a
+			// UDN NAD is matched as well as the default network.
+			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "a-pod", Namespace: "foo-ns", UID: "uid-2",
+			}}
+			var err error
+			existingPod.Annotations, err = util.MarshalPodDPUConnStatus(nil,
+				map[string]*util.DPUConnectionStatus{
+					udnNADKey: {Status: util.DPUConnectionStatusReady},
+				})
+			Expect(err).ToNot(HaveOccurred())
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{existingPod}, nil)
+
+			Expect(ctrl.bootstrapDPUPodMapFromOVS()).To(Succeed())
+
+			ps, ok := ctrl.podStates.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(ps.nadStates[udnNADKey].revalidate).To(BeFalse())
 		})
 
 		It("Deletes orphaned representor port when pod no longer exists", func() {
@@ -852,6 +957,161 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(ctrl.nadPods.pods(types.DefaultNetworkName)).To(BeEmpty())
 		})
 
+		It("Configures again a representor recovered from OVS", func() {
+			rep := "pf0vf9"
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{
+					name: rep, sandbox: "sb1", vfNetdevName: rep,
+					ifaceID: genIfaceID("foo-ns", "a-pod"), ifaceIDVer: "uid-1",
+				},
+			})
+			defer cleanup()
+
+			ctrl.nodeName = "dpu-host"
+			ctrl.networkMgr = &networkmanager.FakeNetworkManager{}
+			ctrl.podStates.Store("foo-ns/a-pod", &podDPUState{
+				uid: k8stypes.UID("uid-1"),
+				nadStates: map[string]*dpuConnectionState{
+					types.DefaultNetworkName: {vfRepName: rep, sandboxId: "sb1", revalidate: true},
+				},
+			})
+
+			// The pod is already reported ready, and the representor is there,
+			// but it was recovered from OVS rather than configured by us. The
+			// pod has no OVN annotation, so the configuration fails and the
+			// attempt is what this asserts.
+			livePod := pod.DeepCopy()
+			livePod.UID = k8stypes.UID("uid-1")
+			livePod.Spec.NodeName = ctrl.nodeName
+			annot, err := util.MarshalPodDPUConnDetails(nil,
+				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, types.DefaultNetworkName)
+			Expect(err).ToNot(HaveOccurred())
+			annot, err = util.MarshalPodDPUConnStatus(annot,
+				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: {Status: util.DPUConnectionStatusReady}})
+			Expect(err).ToNot(HaveOccurred())
+			livePod.Annotations = annot
+			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
+
+			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
+
+			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(MatchError(
+				ContainSubstring("failed to get pod interface information")))
+
+			// The status the pod carries is left alone, and so is the port.
+			kubeMock.AssertNotCalled(GinkgoT(), "PatchPodStatusAnnotations", mock.Anything, mock.Anything)
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, rep)
+
+			// The port is still there, so it stays tracked for the retry.
+			ps, ok := ctrl.podStates.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+			Expect(ps.nadStates[types.DefaultNetworkName].revalidate).To(BeTrue())
+		})
+
+		It("Does not report a recovered representor ready before configuring it", func() {
+			rep := "pf0vf9"
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{
+					name: rep, sandbox: "sb1", vfNetdevName: rep,
+					ifaceID: genIfaceID("foo-ns", "a-pod"), ifaceIDVer: "uid-1",
+				},
+			})
+			defer cleanup()
+
+			ctrl.nodeName = "dpu-host"
+			ctrl.networkMgr = &networkmanager.FakeNetworkManager{}
+			ctrl.podStates.Store("foo-ns/a-pod", &podDPUState{
+				uid: k8stypes.UID("uid-1"),
+				nadStates: map[string]*dpuConnectionState{
+					types.DefaultNetworkName: {vfRepName: rep, sandboxId: "sb1", revalidate: true},
+				},
+			})
+
+			// A restart between the OVS port add and the status update leaves
+			// the port without a status, so there is nothing to preserve and
+			// nothing to claim either.
+			livePod := pod.DeepCopy()
+			livePod.UID = k8stypes.UID("uid-1")
+			livePod.Spec.NodeName = ctrl.nodeName
+			annot, err := util.MarshalPodDPUConnDetails(nil,
+				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, types.DefaultNetworkName)
+			Expect(err).ToNot(HaveOccurred())
+			livePod.Annotations = annot
+			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
+
+			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(MatchError(
+				ContainSubstring("failed to get pod interface information")))
+
+			kubeMock.AssertNotCalled(GinkgoT(), "PatchPodStatusAnnotations", mock.Anything, mock.Anything)
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, rep)
+		})
+
+		It("Tears down a representor whose revalidation never succeeded", func() {
+			rep := "pf0vf9"
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{
+					name: rep, sandbox: "sb1", vfNetdevName: rep,
+					ifaceID: genIfaceID("foo-ns", "a-pod"), ifaceIDVer: "uid-1",
+				},
+			})
+			defer cleanup()
+
+			ctrl.nodeName = "dpu-host"
+			ctrl.networkMgr = &networkmanager.FakeNetworkManager{}
+			ctrl.podStates.Store("foo-ns/a-pod", &podDPUState{
+				uid: k8stypes.UID("uid-1"),
+				nadStates: map[string]*dpuConnectionState{
+					types.DefaultNetworkName: {vfRepName: rep, sandboxId: "sb1", revalidate: true},
+				},
+			})
+
+			readyStatus := map[string]*util.DPUConnectionStatus{
+				types.DefaultNetworkName: {Status: util.DPUConnectionStatusReady},
+			}
+			annot, err := util.MarshalPodDPUConnDetails(nil,
+				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, types.DefaultNetworkName)
+			Expect(err).ToNot(HaveOccurred())
+			annot, err = util.MarshalPodDPUConnStatus(annot, readyStatus)
+			Expect(err).ToNot(HaveOccurred())
+
+			livePod := pod.DeepCopy()
+			livePod.UID = k8stypes.UID("uid-1")
+			livePod.Spec.NodeName = ctrl.nodeName
+			livePod.Annotations = annot
+			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil).Once()
+
+			// The revalidation fails, leaving the port in place.
+			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(MatchError(
+				ContainSubstring("failed to get pod interface information")))
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, rep)
+
+			// The host then takes the pod's connection details away. The
+			// representor has to go even though no reconcile ever configured it.
+			detailsGonePod := livePod.DeepCopy()
+			detailsGonePod.Annotations, err = util.MarshalPodDPUConnStatus(nil, readyStatus)
+			Expect(err).ToNot(HaveOccurred())
+			clearedPod := detailsGonePod.DeepCopy()
+			clearedPod.Annotations, err = util.MarshalPodDPUConnStatus(clearedPod.Annotations,
+				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: nil})
+			Expect(err).ToNot(HaveOccurred())
+
+			podNamespaceLister.On("Get", "a-pod").Return(detailsGonePod, nil)
+			kubeMock.On("PatchPodStatusAnnotations", detailsGonePod, clearedPod).Return(nil)
+			checkOVSPortPodInfo(execMock, rep, true, "15", "sb1", types.DefaultNetworkName)
+			vfLink := &linkMock.Link{}
+			netlinkOpsMock.On("LinkByName", rep).Return(vfLink, nil)
+			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
+
+			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(Succeed())
+
+			expectOVSPortAndInterfaceAbsent(ctrl.ovsClient, rep)
+			_, ok := ctrl.podStates.Load("foo-ns/a-pod")
+			Expect(ok).To(BeFalse())
+			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
+		})
+
 		It("Fails the pod on a malformed NAD key instead of unconfiguring it", func() {
 			ctrl.nodeName = "dpu-host"
 			ctrl.podStates.Store("foo-ns/a-pod", &podDPUState{
@@ -1183,6 +1443,16 @@ var _ = Describe("Node DPU tests", func() {
 			tracked := map[string]*dpuConnectionState{"ns1/nad1": {vfRepName: "pf0vf9", sandboxId: "sb1"}}
 			Expect(ctrl.reconcileDPUConnStatus(livePod, "foo-ns/a-pod", tracked)).To(Succeed())
 			kubeMock.AssertCalled(GinkgoT(), "PatchPodStatusAnnotations", livePod, patched)
+		})
+
+		It("Does not set the status of a NAD awaiting revalidation", func() {
+			podNamespaceLister.On("Get", livePod.Name).Return(livePod, nil)
+
+			tracked := map[string]*dpuConnectionState{
+				"ns1/nad1": {vfRepName: "pf0vf9", sandboxId: "sb1", revalidate: true},
+			}
+			Expect(ctrl.reconcileDPUConnStatus(livePod, "foo-ns/a-pod", tracked)).To(Succeed())
+			kubeMock.AssertNotCalled(GinkgoT(), "PatchPodStatusAnnotations", mock.Anything, mock.Anything)
 		})
 
 		It("Clears the status of a NAD that is no longer tracked", func() {

@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -205,7 +206,9 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		return nil
 	}
 
-	existingUIDs := make(map[k8stypes.UID]bool)
+	// readyNADs holds, per pod on this node, the NADs it already reports ready.
+	// Its keys are also what says a pod still exists.
+	readyNADs := make(map[k8stypes.UID]sets.Set[string])
 	pods, err := c.podLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list pods for DPU bootstrap: %w", err)
@@ -214,7 +217,18 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		if pod.Spec.NodeName != c.nodeName {
 			continue
 		}
-		existingUIDs[pod.UID] = true
+		ready := sets.New[string]()
+		currentStatus, err := util.UnmarshalPodDPUConnStatusAllNetworks(pod.Annotations)
+		if err != nil {
+			klog.Warningf("DPU bootstrap: cannot read the connection status of pod %s/%s, "+
+				"configuring its representors again: %v", pod.Namespace, pod.Name, err)
+		}
+		for nadKey, status := range currentStatus {
+			if status.Status == util.DPUConnectionStatusReady {
+				ready.Insert(nadKey)
+			}
+		}
+		readyNADs[pod.UID] = ready
 	}
 
 	var orphanedPorts []string
@@ -234,7 +248,8 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 
 		uid := k8stypes.UID(podUID)
 
-		if !existingUIDs[uid] {
+		ready, podExists := readyNADs[uid]
+		if !podExists {
 			klog.Infof("DPU bootstrap: removing orphaned representor %s (pod UID %s, NAD %s): pod no longer exists", repName, podUID, nadKey)
 			orphanedPorts = append(orphanedPorts, repName)
 			continue
@@ -252,9 +267,13 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 			uid:       uid,
 			nadStates: make(map[string]*dpuConnectionState),
 		})
+		// A pod already reported ready went through a complete ConfigureOVS,
+		// since that is the last thing addRepPort does. Anything else may have
+		// been interrupted part way and has to be configured again.
 		ps.nadStates[nadKey] = &dpuConnectionState{
-			vfRepName: repName,
-			sandboxId: sandbox,
+			vfRepName:  repName,
+			sandboxId:  sandbox,
+			revalidate: !ready.Has(nadKey),
 		}
 	}
 
