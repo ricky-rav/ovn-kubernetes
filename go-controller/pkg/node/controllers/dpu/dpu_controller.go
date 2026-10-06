@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -34,10 +35,9 @@ import (
 // Controller manages the DPU representor port lifecycle for pods across all
 // networks, default and user-defined.
 type Controller struct {
-	watchFactory factory.NodeWatchFactory
-	kube         kube.Interface
-	networkMgr   networkmanager.Interface
-	ovsClient    libovsdbclient.Client
+	kube       kube.Interface
+	networkMgr networkmanager.Interface
+	ovsClient  libovsdbclient.Client
 
 	// nodeName is the Kubernetes node whose pods this DPU serves.
 	nodeName string
@@ -52,6 +52,10 @@ type Controller struct {
 	// podStates tracks the DPU connection state of the pods this DPU serves,
 	// keyed by pod key (namespace/name).
 	podStates *syncmap.SyncMap[*podDPUState]
+
+	// nadPods holds the pods that reference each NAD, so that a NAD event can
+	// requeue them without listing every pod in the cluster.
+	nadPods nadPodIndex
 }
 
 func NewController(
@@ -65,14 +69,13 @@ func NewController(
 	podLister := corelisters.NewPodLister(wf.LocalPodInformer().GetIndexer())
 
 	c := &Controller{
-		watchFactory: wf,
-		kube:         kube,
-		networkMgr:   networkMgr,
-		ovsClient:    ovsClient,
-		podLister:    podLister,
-		clientSet:    cni.NewClientSet(kclient, podLister),
-		nodeName:     nodeName,
-		podStates:    syncmap.NewSyncMap[*podDPUState](),
+		kube:       kube,
+		networkMgr: networkMgr,
+		ovsClient:  ovsClient,
+		podLister:  podLister,
+		clientSet:  cni.NewClientSet(kclient, podLister),
+		nodeName:   nodeName,
+		podStates:  syncmap.NewSyncMap[*podDPUState](),
 	}
 
 	c.podController = controller.NewController("dpu-pod-controller",
@@ -139,7 +142,7 @@ func (c *Controller) reconcileDPUPod(key string) error {
 		return nil
 	}
 
-	pod, err := c.watchFactory.GetPod(namespace, name)
+	pod, err := c.podLister.Pods(namespace).Get(name)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
@@ -156,6 +159,7 @@ func (c *Controller) reconcileDPUPod(key string) error {
 
 	return c.podStates.DoWithLock(key, func(key string) error {
 		if pod == nil {
+			c.nadPods.delete(key)
 			return c.handleDeleteDPUPod(key, nil)
 		}
 
@@ -174,11 +178,7 @@ func (c *Controller) reconcileDPUPod(key string) error {
 // deleted. It only requeues the pods that reference the NAD, leaving
 // reconcileDPUPod as the sole writer of representors and annotations.
 func (c *Controller) reconcileNAD(nadName string) error {
-	podKeys, err := c.podsToRequeueForNAD(nadName)
-	if err != nil {
-		return err
-	}
-
+	podKeys := c.nadPods.pods(nadName)
 	if len(podKeys) > 0 {
 		klog.Infof("NAD %s changed, requeueing pods %v", nadName, podKeys)
 	}
@@ -187,39 +187,6 @@ func (c *Controller) reconcileNAD(nadName string) error {
 	}
 
 	return nil
-}
-
-// podsToRequeueForNAD returns the keys of the pods on this node whose DPU
-// connection details refer to nadName.
-func (c *Controller) podsToRequeueForNAD(nadName string) ([]string, error) {
-	pods, err := c.watchFactory.GetAllPods()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods for NAD %s: %w", nadName, err)
-	}
-
-	var podKeys []string
-	for _, pod := range pods {
-		if pod.Spec.NodeName != c.nodeName {
-			continue
-		}
-		allDPUCDs, err := util.UnmarshalPodDPUConnDetailsAllNetworks(pod.Annotations)
-		if err != nil {
-			klog.Warningf("Failed to unmarshal DPU connection details of pod %s/%s: %v", pod.Namespace, pod.Name, err)
-			continue
-		}
-		// A repeat attachment to the same NAD is keyed "ns/nad/1", "ns/nad/2",
-		// so the bare key is present whenever the pod references the NAD.
-		if _, ok := allDPUCDs[nadName]; !ok {
-			continue
-		}
-		podKey, err := cache.MetaNamespaceKeyFunc(pod)
-		if err != nil {
-			klog.Errorf("Failed to get key for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-			continue
-		}
-		podKeys = append(podKeys, podKey)
-	}
-	return podKeys, nil
 }
 
 // bootstrapDPUPodMapFromOVS pre-populates podStates from existing OVS representor
@@ -239,9 +206,9 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 	}
 
 	existingUIDs := make(map[k8stypes.UID]bool)
-	pods, err := c.watchFactory.GetAllPods()
+	pods, err := c.podLister.List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list pods for DPU bootstrap: %v", err)
+		return fmt.Errorf("failed to list pods for DPU bootstrap: %w", err)
 	}
 	for _, pod := range pods {
 		if pod.Spec.NodeName != c.nodeName {

@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -46,11 +47,11 @@ func (c *Controller) addDPUPodForNAD(pod *corev1.Pod, state *dpuConnectionState,
 	podInterfaceInfo, err := cni.PodAnnotation2PodInfo(pod.Annotations, nil,
 		string(pod.UID), "", nadKey, netInfo.GetNetworkName(), netInfo.MTU())
 	if err != nil {
-		return fmt.Errorf("failed to get pod interface information of %s: %v", podDesc, err)
+		return fmt.Errorf("failed to get pod interface information of %s: %w", podDesc, err)
 	}
 	err = c.addRepPort(pod, state, podInterfaceInfo, getter)
 	if err != nil {
-		return fmt.Errorf("failed to add rep port for %s: %v", podDesc, err)
+		return fmt.Errorf("failed to add rep port for %s: %w", podDesc, err)
 	}
 	return nil
 }
@@ -90,6 +91,20 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 		return err
 	}
 
+	// Index the pod by the NADs it asks for, before the lookups below, so that
+	// a NAD becoming known between the two still requeues the pod. The default
+	// network has no NAD to wait for.
+	nadNames := sets.New[string]()
+	for nadKey := range allDPUCDs {
+		if nadKey == types.DefaultNetworkName {
+			continue
+		}
+		if nadName, _, err := util.GetNadFromIndexedNADKey(nadKey); err == nil {
+			nadNames.Insert(nadName)
+		}
+	}
+	c.nadPods.set(podKey, nadNames)
+
 	// Desired NADs: those in the connection details annotation whose network
 	// still exists. Each one keeps the NetInfo the add below configures from.
 	type desiredNAD struct {
@@ -108,7 +123,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 		}
 		vfRepName, err := util.GetDPUOps().GetPortRepresentor(dpuCD.PfId, dpuCD.VfId)
 		if err != nil {
-			return fmt.Errorf("failed to get VF representor for pod %s/%s NAD %s (PfId=%s, VfId=%s): %v",
+			return fmt.Errorf("failed to get VF representor for pod %s/%s NAD %s (PfId=%s, VfId=%s): %w",
 				pod.Namespace, pod.Name, nadKey, dpuCD.PfId, dpuCD.VfId, err)
 		}
 		desiredNADs[nadKey] = desiredNAD{
@@ -142,7 +157,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 			klog.Infof("Deleting stale VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
 			valid, err := validateRepPort(state.vfRepName, state.sandboxId, nadKey)
 			if err != nil {
-				return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %v", state.vfRepName, podKey, nadKey, err)
+				return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %w", state.vfRepName, podKey, nadKey, err)
 			}
 			if valid {
 				validPortsToDelete = append(validPortsToDelete, state.vfRepName)
@@ -230,9 +245,9 @@ func (c *Controller) reconcileDPUConnStatus(pod *corev1.Pod, podKey string, trac
 	}
 
 	klog.V(5).Infof("Updating DPU connection status of pod %s for %d NADs", podKey, len(statusMap))
-	err = util.UpdatePodDPUConnStatusWithRetry(c.watchFactory.PodCoreInformer().Lister(), c.kube, pod, statusMap)
+	err = util.UpdatePodDPUConnStatusWithRetry(c.podLister, c.kube, pod, statusMap)
 	if err != nil && !util.IsAnnotationAlreadySetError(err) {
-		return fmt.Errorf("failed to update DPU connection status of pod %s: %v", podKey, err)
+		return fmt.Errorf("failed to update DPU connection status of pod %s: %w", podKey, err)
 	}
 	return nil
 }
@@ -260,7 +275,7 @@ func (c *Controller) handleDeleteDPUPod(podKey string, pod *corev1.Pod) error {
 		klog.Infof("Deleting VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
 		valid, err := validateRepPort(state.vfRepName, state.sandboxId, nadKey)
 		if err != nil {
-			return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %v", state.vfRepName, podKey, nadKey, err)
+			return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %w", state.vfRepName, podKey, nadKey, err)
 		}
 		if valid {
 			portsToDelete = append(portsToDelete, state.vfRepName)
@@ -298,7 +313,7 @@ func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifIn
 	ifInfo.NetdevName = state.vfRepName
 	deviceID, err := util.GetDPUOps().GetDeviceAddress(state.vfRepName)
 	if err != nil {
-		return fmt.Errorf("failed to get PCI address of VF rep %s for pod %s: %v", state.vfRepName, podDesc, err)
+		return fmt.Errorf("failed to get PCI address of VF rep %s for pod %s: %w", state.vfRepName, podDesc, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -316,10 +331,10 @@ func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifIn
 	// Update connection-status annotation
 	// TODO(adrianc): we should update Status in case of error as well
 	statusMap := map[string]*util.DPUConnectionStatus{nadKey: {Status: util.DPUConnectionStatusReady, Reason: ""}}
-	err = util.UpdatePodDPUConnStatusWithRetry(c.watchFactory.PodCoreInformer().Lister(), c.kube, pod, statusMap)
+	err = util.UpdatePodDPUConnStatusWithRetry(c.podLister, c.kube, pod, statusMap)
 	if err != nil && !util.IsAnnotationAlreadySetError(err) {
 		_ = c.delRepPort(pod, state, nadKey)
-		return fmt.Errorf("failed to update connection status annotation for %s: %v", podDesc, err)
+		return fmt.Errorf("failed to update connection status annotation for %s: %w", podDesc, err)
 	}
 	return nil
 }

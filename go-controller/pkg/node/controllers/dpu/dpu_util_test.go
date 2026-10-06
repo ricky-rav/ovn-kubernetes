@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
@@ -20,7 +21,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	factorymocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -28,7 +28,6 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	linkMock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
-	coreinformermocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
 	v1mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -140,10 +139,8 @@ var _ = Describe("Node DPU tests", func() {
 	var netlinkOpsMock utilMocks.NetLinkOps
 	var execMock *ovntest.FakeExec
 	var kubeMock kubemocks.Interface
-	var factoryMock factorymocks.NodeWatchFactory
 	var pod corev1.Pod
 	var ctrl *Controller
-	var podInformer coreinformermocks.PodInformer
 	var podLister v1mocks.PodLister
 	var podNamespaceLister v1mocks.PodNamespaceLister
 	var clientset *cni.ClientSet
@@ -166,17 +163,15 @@ var _ = Describe("Node DPU tests", func() {
 
 		kubeMock = kubemocks.Interface{}
 
-		factoryMock = factorymocks.NodeWatchFactory{}
-		ctrl = &Controller{
-			kube:         &kubeMock,
-			watchFactory: &factoryMock,
-			podStates:    syncmap.NewSyncMap[*podDPUState](),
-		}
-
-		podInformer = coreinformermocks.PodInformer{}
 		podNamespaceLister = v1mocks.PodNamespaceLister{}
 		podLister = v1mocks.PodLister{}
 		podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
+
+		ctrl = &Controller{
+			kube:      &kubeMock,
+			podLister: &podLister,
+			podStates: syncmap.NewSyncMap[*podDPUState](),
+		}
 
 		pod = corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 			Name:        "a-pod",
@@ -351,8 +346,6 @@ var _ = Describe("Node DPU tests", func() {
 				cpod.Annotations, err = util.MarshalPodDPUConnStatus(cpod.Annotations, map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: &dcs})
 				Expect(err).ToNot(HaveOccurred())
 
-				factoryMock.On("PodCoreInformer").Return(&podInformer)
-				podInformer.On("Lister").Return(&podLister)
 				podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(nil)
@@ -373,8 +366,6 @@ var _ = Describe("Node DPU tests", func() {
 				checkOVSPortPodInfo(execMock, vfRep, true, "15", "a8d09931", "default")
 				netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 
-				factoryMock.On("PodCoreInformer").Return(&podInformer)
-				podInformer.On("Lister").Return(&podLister)
 				podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(fmt.Errorf("failed to set pod annotations"))
@@ -449,7 +440,7 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			defer cleanup()
 
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{}, nil)
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
@@ -466,7 +457,7 @@ var _ = Describe("Node DPU tests", func() {
 			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "a-pod", Namespace: "foo-ns", UID: "uid-1",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{existingPod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{existingPod}, nil)
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
@@ -494,7 +485,7 @@ var _ = Describe("Node DPU tests", func() {
 			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "a-pod", Namespace: "foo-ns", UID: "uid-2",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{existingPod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{existingPod}, nil)
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
@@ -513,7 +504,7 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			defer cleanup()
 
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{}, nil)
 			netlinkOpsMock.On("LinkByName", "pf0vf9").Return(nil, fmt.Errorf("no link"))
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
@@ -533,7 +524,7 @@ var _ = Describe("Node DPU tests", func() {
 			alivePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "alive-pod", Namespace: "foo-ns", UID: "uid-alive",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{alivePod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{alivePod}, nil)
 			netlinkOpsMock.On("LinkByName", "pf0vf10").Return(nil, fmt.Errorf("no link"))
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
@@ -570,7 +561,7 @@ var _ = Describe("Node DPU tests", func() {
 			multiPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "multi-pod", Namespace: "foo-ns", UID: "uid-multi",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{multiPod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{multiPod}, nil)
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
@@ -595,7 +586,7 @@ var _ = Describe("Node DPU tests", func() {
 			okPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "ok-pod", Namespace: "foo-ns", UID: "uid-ok",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{okPod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{okPod}, nil)
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
@@ -620,7 +611,7 @@ var _ = Describe("Node DPU tests", func() {
 			alivePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 				Name: "alive-pod", Namespace: "foo-ns", UID: "uid-alive",
 			}}
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{alivePod}, nil)
+			podLister.On("List", mock.Anything).Return([]*corev1.Pod{alivePod}, nil)
 			netlinkOpsMock.On("LinkByName", "pf0vf9").Return(nil, fmt.Errorf("no link"))
 
 			err := ctrl.bootstrapDPUPodMapFromOVS()
@@ -662,7 +653,7 @@ var _ = Describe("Node DPU tests", func() {
 			recreated := pod.DeepCopy()
 			recreated.UID = k8stypes.UID("uid-new")
 			recreated.Spec.NodeName = ctrl.nodeName
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(recreated, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(recreated, nil)
 
 			checkOVSPortPodInfo(execMock, staleRep, true, "15", "sb-old", types.DefaultNetworkName)
 			vfLink := &linkMock.Link{}
@@ -712,13 +703,10 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 			otherPod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(otherPod, nil)
 
 			// Armed so that acting on this pod, which must not happen, fails on
 			// an assertion rather than on an unexpected mock call.
 			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(otherPod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", mock.Anything, mock.Anything).Return(nil)
 
@@ -768,7 +756,7 @@ var _ = Describe("Node DPU tests", func() {
 				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb2"}, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			hostNetPod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(hostNetPod, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(hostNetPod, nil)
 
 			// Armed so that configuring this pod, which must not happen, fails
 			// on an assertion rather than on an unexpected mock call.
@@ -801,15 +789,12 @@ var _ = Describe("Node DPU tests", func() {
 			livePod.UID = k8stypes.UID("uid-1")
 			livePod.Annotations = annot
 			livePod.Spec.NodeName = ctrl.nodeName
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 
 			clearedPod := livePod.DeepCopy()
 			clearedPod.Annotations, err = util.MarshalPodDPUConnStatus(clearedPod.Annotations,
 				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: nil})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, clearedPod).Return(nil)
 
@@ -847,7 +832,6 @@ var _ = Describe("Node DPU tests", func() {
 				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			livePod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
 
 			readyPod := livePod.DeepCopy()
@@ -855,8 +839,6 @@ var _ = Describe("Node DPU tests", func() {
 				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: {Status: util.DPUConnectionStatusReady}})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, readyPod).Return(nil)
 
@@ -866,6 +848,8 @@ var _ = Describe("Node DPU tests", func() {
 			ps, ok := ctrl.podStates.Load("foo-ns/a-pod")
 			Expect(ok).To(BeTrue())
 			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+			// The default network has no NAD to be requeued for.
+			Expect(ctrl.nadPods.pods(types.DefaultNetworkName)).To(BeEmpty())
 		})
 
 		It("Fails the pod on a malformed NAD key instead of unconfiguring it", func() {
@@ -884,7 +868,7 @@ var _ = Describe("Node DPU tests", func() {
 				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, "ns1/nad1/not-a-number")
 			Expect(err).ToNot(HaveOccurred())
 			livePod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 
 			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(
 				MatchError(ContainSubstring("malformed index for NAD key")))
@@ -918,7 +902,7 @@ var _ = Describe("Node DPU tests", func() {
 				&util.DPUConnectionDetails{PfId: "0", VfId: "9", SandboxId: "sb1"}, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			livePod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
+			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
 
 			// The NAD is untracked so that it is added again, and the add is
@@ -962,7 +946,6 @@ var _ = Describe("Node DPU tests", func() {
 				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: {Status: util.DPUConnectionStatusReady}})
 			Expect(err).ToNot(HaveOccurred())
 			livePod.Annotations = annot
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(rep, nil)
 
 			clearedPod := livePod.DeepCopy()
@@ -970,8 +953,6 @@ var _ = Describe("Node DPU tests", func() {
 				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: nil})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, clearedPod).Return(fmt.Errorf("API is down"))
 
@@ -1015,15 +996,12 @@ var _ = Describe("Node DPU tests", func() {
 			livePod.UID = k8stypes.UID("uid-1")
 			livePod.Annotations = annot
 			livePod.Spec.NodeName = ctrl.nodeName
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 
 			clearedPod := livePod.DeepCopy()
 			clearedPod.Annotations, err = util.MarshalPodDPUConnStatus(clearedPod.Annotations,
 				map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: nil})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, clearedPod).Return(nil)
 
@@ -1076,7 +1054,6 @@ var _ = Describe("Node DPU tests", func() {
 			livePod.UID = k8stypes.UID("uid-1")
 			livePod.Annotations = annot
 			livePod.Spec.NodeName = ctrl.nodeName
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 
 			// The pod outlives its NAD, so its connection status has to be
 			// cleared along with the representor.
@@ -1085,8 +1062,6 @@ var _ = Describe("Node DPU tests", func() {
 				map[string]*util.DPUConnectionStatus{nadKey: nil})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, clearedPod).Return(nil)
 
@@ -1137,15 +1112,12 @@ var _ = Describe("Node DPU tests", func() {
 			livePod.UID = k8stypes.UID("uid-1")
 			livePod.Annotations = annot
 			livePod.Spec.NodeName = ctrl.nodeName
-			factoryMock.On("GetPod", "foo-ns", "a-pod").Return(livePod, nil)
 
 			clearedPod := livePod.DeepCopy()
 			clearedPod.Annotations, err = util.MarshalPodDPUConnStatus(clearedPod.Annotations,
 				map[string]*util.DPUConnectionStatus{nadKey: nil})
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", "a-pod").Return(livePod, nil)
 			kubeMock.On("PatchPodStatusAnnotations", livePod, clearedPod).Return(fmt.Errorf("API is down"))
 
@@ -1186,8 +1158,6 @@ var _ = Describe("Node DPU tests", func() {
 			patched.Annotations, err = util.MarshalPodDPUConnStatus(patched.Annotations, statusMap)
 			Expect(err).ToNot(HaveOccurred())
 
-			factoryMock.On("PodCoreInformer").Return(&podInformer)
-			podInformer.On("Lister").Return(&podLister)
 			podNamespaceLister.On("Get", from.Name).Return(from, nil)
 			kubeMock.On("PatchPodStatusAnnotations", from, patched).Return(nil)
 			return patched
@@ -1232,12 +1202,13 @@ var _ = Describe("Node DPU tests", func() {
 		})
 	})
 
-	Context("podsToRequeueForNAD", func() {
-		// podOnNodeWithNADs builds a pod with DPU connection details for each
-		// of the given NAD keys.
-		podOnNodeWithNADs := func(name, nodeName string, nadKeys ...string) *corev1.Pod {
+	Context("nadPods", func() {
+		// podWithNADs builds a pod on this node with DPU connection details for
+		// each of the given NAD keys. None of those NADs exist, so reconciling
+		// the pod does no more than index it.
+		podWithNADs := func(name string, nadKeys ...string) *corev1.Pod {
 			p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "foo-ns"}}
-			p.Spec.NodeName = nodeName
+			p.Spec.NodeName = "dpu-host"
 			for i, nadKey := range nadKeys {
 				scd := &util.DPUConnectionDetails{PfId: "0", VfId: fmt.Sprintf("%d", i), SandboxId: "sb-" + name}
 				annot, err := util.MarshalPodDPUConnDetails(p.Annotations, scd, nadKey)
@@ -1249,40 +1220,52 @@ var _ = Describe("Node DPU tests", func() {
 
 		BeforeEach(func() {
 			ctrl.nodeName = "dpu-host"
+			ctrl.networkMgr = &networkmanager.FakeNetworkManager{}
 		})
 
-		It("Selects only pods on this node that request the NAD", func() {
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{
-				podOnNodeWithNADs("wants-nad", "dpu-host", "ns1/nad1"),
-				podOnNodeWithNADs("other-nad", "dpu-host", "ns1/nad2"),
-				podOnNodeWithNADs("other-node", "other-host", "ns1/nad1"),
-				podOnNodeWithNADs("no-dpu-annotation", "dpu-host"),
-			}, nil)
+		It("Indexes a pod by every NAD it asks for, under the base key", func() {
+			p := podWithNADs("waiting", "ns1/nad1", "ns1/nad1/1", "ns1/nad2")
 
-			Expect(ctrl.podsToRequeueForNAD("ns1/nad1")).To(ConsistOf("foo-ns/wants-nad"))
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/waiting", p, nil)).To(Succeed())
+
+			Expect(ctrl.nadPods.pods("ns1/nad1")).To(ConsistOf("foo-ns/waiting"))
+			Expect(ctrl.nadPods.pods("ns1/nad2")).To(ConsistOf("foo-ns/waiting"))
 		})
 
-		It("Selects a pod attached to the NAD more than once exactly once", func() {
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{
-				podOnNodeWithNADs("indexed", "dpu-host", types.DefaultNetworkName, "ns1/nad1", "ns1/nad1/1"),
-			}, nil)
+		It("Indexes only the pods that ask for the NAD", func() {
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/wants-nad", podWithNADs("wants-nad", "ns1/nad1"), nil)).To(Succeed())
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/other-nad", podWithNADs("other-nad", "ns1/nad2"), nil)).To(Succeed())
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/no-nad", podWithNADs("no-nad"), nil)).To(Succeed())
 
-			Expect(ctrl.podsToRequeueForNAD("ns1/nad1")).To(ConsistOf("foo-ns/indexed"))
+			Expect(ctrl.nadPods.pods("ns1/nad1")).To(ConsistOf("foo-ns/wants-nad"))
 		})
 
-		It("Selects nothing when no pod requests the NAD", func() {
-			factoryMock.On("GetAllPods").Return([]*corev1.Pod{
-				podOnNodeWithNADs("default-only", "dpu-host", types.DefaultNetworkName),
-			}, nil)
+		It("Drops a NAD the pod no longer asks for", func() {
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/a-pod", podWithNADs("a-pod", "ns1/nad1", "ns1/nad2"), nil)).To(Succeed())
 
-			Expect(ctrl.podsToRequeueForNAD("ns1/nad1")).To(BeEmpty())
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/a-pod", podWithNADs("a-pod", "ns1/nad2"), nil)).To(Succeed())
+
+			Expect(ctrl.nadPods.pods("ns1/nad1")).To(BeEmpty())
+			Expect(ctrl.nadPods.pods("ns1/nad2")).To(ConsistOf("foo-ns/a-pod"))
 		})
 
-		It("Returns an error when listing pods fails", func() {
-			factoryMock.On("GetAllPods").Return(nil, fmt.Errorf("lister is down"))
+		It("Does not index a pod of another node", func() {
+			p := podWithNADs("elsewhere", "ns1/nad1")
+			p.Spec.NodeName = "other-host"
+			podNamespaceLister.On("Get", "elsewhere").Return(p, nil)
 
-			_, err := ctrl.podsToRequeueForNAD("ns1/nad1")
-			Expect(err).To(MatchError(ContainSubstring("lister is down")))
+			Expect(ctrl.reconcileDPUPod("foo-ns/elsewhere")).To(Succeed())
+
+			Expect(ctrl.nadPods.pods("ns1/nad1")).To(BeEmpty())
+		})
+
+		It("Forgets a pod that is gone", func() {
+			Expect(ctrl.handleAddOrUpdateDPUPod("foo-ns/a-pod", podWithNADs("a-pod", "ns1/nad1"), nil)).To(Succeed())
+			podNamespaceLister.On("Get", "a-pod").Return(nil, apierrors.NewNotFound(corev1.Resource("pods"), "a-pod"))
+
+			Expect(ctrl.reconcileDPUPod("foo-ns/a-pod")).To(Succeed())
+
+			Expect(ctrl.nadPods.pods("ns1/nad1")).To(BeEmpty())
 		})
 	})
 
