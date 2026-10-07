@@ -104,7 +104,7 @@ ethernets:
 			return err
 		}
 
-		BeforeEach(func() {
+		BeforeEach(func(ctx SpecContext) {
 			ns, err := fr.CreateNamespace(context.Background(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
 			})
@@ -122,7 +122,7 @@ ethernets:
 			// GenerateCUDN defaults subnet-less networks to IPAMDisabled; DHCP
 			// delegates addressing to the external server instead
 			cudn.Spec.Network.Localnet.IPAM.Mode = udnv1.IPAMDHCP
-			createCUDNWithClients(crClient, fr.DynamicClient, cudn)
+			createCUDNWithClients(ctx, crClient, fr.DynamicClient, cudn)
 			nadKey = namespace + "/" + cudn.Name
 
 			By("setting up the localnet underlay")

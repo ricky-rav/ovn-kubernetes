@@ -4378,7 +4378,7 @@ func createUplinkCUDN(
 	ictx.AddCleanUpFn(func() error {
 		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
-	gomega.Eventually(ctx, networkReadyFunc(client, name)).
+	gomega.Eventually(ctx, networkReadyFunc(ctx, client, name)).
 		WithTimeout(uplinkTimeout).
 		WithPolling(uplinkPoll).
 		Should(gomega.Succeed(), "expected CUDN %s to become ready", name)
@@ -4788,7 +4788,7 @@ func createUplinkPrimaryUDN(
 	if _, err := client.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("failed to create UserDefinedNetwork %s/%s: %w", namespace, name, err)
 	}
-	gomega.Eventually(ctx, networkReadyFunc(client, name)).
+	gomega.Eventually(ctx, networkReadyFunc(ctx, client, name)).
 		WithTimeout(uplinkTimeout).
 		WithPolling(uplinkPoll).
 		Should(gomega.Succeed(), "expected UserDefinedNetwork %s/%s to become ready", namespace, name)
