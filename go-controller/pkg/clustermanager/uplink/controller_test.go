@@ -627,6 +627,74 @@ func TestUplinkControllerDeletesStatesForMissingUplink(t *testing.T) {
 	expectUplinkStateExists(g, client, "br-red", "node-a")
 }
 
+func TestUplinkControllerDeletesStatesForDeletedNode(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newUplink("br-red", "role", "blue", "br-red"),
+		newResolvedUplinkState("br-blue", "node-a", "br-blue"),
+		newResolvedUplinkState("br-blue", "node-gone", "br-blue"),
+		newResolvedUplinkState("br-red", "node-gone", "br-red"),
+	)
+
+	reconciledUplinks := make(chan string, 4)
+	controller.uplinkController = controllerutil.NewController(
+		"test-uplink-node-delete",
+		&controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Lister:      controller.uplinkLister.List,
+			Reconcile: func(key string) error {
+				reconciledUplinks <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controllerutil.Start(controller.uplinkController)).To(gomega.Succeed())
+	t.Cleanup(func() {
+		controllerutil.Stop(controller.uplinkController)
+	})
+
+	expectAllUplinksReconciled := func() {
+		g.Eventually(reconciledUplinks, time.Second).Should(gomega.Receive(gomega.Equal("br-blue")))
+		g.Eventually(reconciledUplinks, time.Second).Should(gomega.Receive(gomega.Equal("br-red")))
+		g.Consistently(reconciledUplinks, 100*time.Millisecond).ShouldNot(gomega.Receive())
+	}
+
+	// An existing node keeps every UplinkState.
+	g.Expect(controller.reconcileNode("node-a")).To(gomega.Succeed())
+	expectUplinkStateExists(g, client, "br-blue", "node-a")
+	expectUplinkStateExists(g, client, "br-blue", "node-gone")
+	expectUplinkStateExists(g, client, "br-red", "node-gone")
+	expectAllUplinksReconciled()
+
+	// A deleted node loses its UplinkStates across all Uplinks, and the
+	// Uplinks are reconciled so their readiness reflects the new node set.
+	g.Expect(controller.reconcileNode("node-gone")).To(gomega.Succeed())
+	expectUplinkStateExists(g, client, "br-blue", "node-a")
+	expectUplinkStateNotFound(g, client, "br-blue", "node-gone")
+	expectUplinkStateNotFound(g, client, "br-red", "node-gone")
+	expectAllUplinksReconciled()
+}
+
+func TestUplinkControllerDeletesUplinkStateOfMissingNode(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newResolvedUplinkState("br-blue", "node-a", "br-blue"),
+		newResolvedUplinkState("br-blue", "node-gone", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileUplinkState(uplinkutil.StateName("br-blue", "node-a"))).To(gomega.Succeed())
+	expectUplinkStateExists(g, client, "br-blue", "node-a")
+
+	g.Expect(controller.reconcileUplinkState(uplinkutil.StateName("br-blue", "node-gone"))).To(gomega.Succeed())
+	expectUplinkStateNotFound(g, client, "br-blue", "node-gone")
+	expectUplinkStateExists(g, client, "br-blue", "node-a")
+}
+
 func TestUplinkControllerReconcilesUplinksForUnknownDeletedUplinkState(t *testing.T) {
 	g := gomega.NewWithT(t)
 	controller, _ := newTestController(t,
