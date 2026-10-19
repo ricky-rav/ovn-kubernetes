@@ -372,6 +372,14 @@ func restoreDPUHostNode(ctx context.Context, cs kubernetes.Interface, hostNode *
 			return len(pods.Items), nil
 		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeZero(),
 			"pods bound to the deleted node %s were not garbage collected", nodeName)
+		// The pod object goes away before the kubelet has stopped the DPU-host
+		// ovnkube-node, which renames the management VF back to its management
+		// port name as long as it runs.
+		gomega.Eventually(func() (string, error) {
+			out, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"crictl", "ps", "-q", "--name", "ovnkube-node"})
+			return strings.TrimSpace(out), err
+		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeEmpty(),
+			"the ovnkube-node container on the deleted node %s did not exit", nodeName)
 		releaseDPUSimManagementVF(hostNode)
 		// Register with the DPU host label already set: a re-registered node
 		// without it matches the full-mode ovnkube-node DaemonSet until the label
