@@ -908,15 +908,20 @@ func (c *Controller) reconcileCUDN(ctx context.Context, key string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q from cache: %v", key, err)
 	}
+	if cudn == nil {
+		// A CUDN can disappear without this controller's finalizer; release
+		// whatever this controller still holds for it.
+		c.namespaceTrackerLock.Lock()
+		c.releaseClusterUDN(name)
+		c.namespaceTrackerLock.Unlock()
+		return nil
+	}
 
 	cudnCopy := cudn.DeepCopy()
 
 	// Validate EVPN configuration once and pass the result to both sync and
 	// transport status so they see the same VTEP snapshot.
-	var evpnErr error
-	if cudnCopy != nil {
-		evpnErr = c.validateEVPN(cudnCopy)
-	}
+	evpnErr := c.validateEVPN(cudnCopy)
 
 	nads, syncErr := c.syncClusterUDN(ctx, cudnCopy, evpnErr)
 
@@ -949,6 +954,10 @@ func (c *Controller) reconcileCUDN(ctx context.Context, key string) error {
 	return errors.Join(syncErr, updateStatusErr)
 }
 
+// syncClusterUDN creates, updates or deletes the NADs of the CUDN in its
+// selected namespaces and manages the CUDN finalizer. It returns the NADs that
+// exist after the sync; a networkInUseError means the deletion must wait for
+// the network to be released.
 func (c *Controller) syncClusterUDN(ctx context.Context, cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, evpnErr error) ([]netv1.NetworkAttachmentDefinition, error) {
 	c.namespaceTrackerLock.Lock()
 	defer c.namespaceTrackerLock.Unlock()
@@ -963,7 +972,7 @@ func (c *Controller) syncClusterUDN(ctx context.Context, cudn *userdefinednetwor
 	if !cudn.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(cudn, template.FinalizerUserDefinedNetwork) {
 			var errs []error
-			for nsToDelete := range affectedNamespaces {
+			for _, nsToDelete := range sets.List(affectedNamespaces) {
 				if err := c.deleteNAD(ctx, cudn, nsToDelete); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete NetworkAttachmentDefinition [%s/%s]: %w",
 						nsToDelete, cudnName, err))
@@ -990,11 +999,7 @@ func (c *Controller) syncClusterUDN(ctx context.Context, cudn *userdefinednetwor
 					cudnName, err)
 			}
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
-			delete(c.namespaceTracker, cudnName)
-			c.cudnMetricUncounted(cudnName, &cudn.Spec.Network)
-			metrics.DeleteCUDNCondition(cudnName)
-			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
-			c.releaseEVPNIDsForNetwork(cudnName)
+			c.releaseClusterUDN(cudnName)
 		}
 
 		return nil, nil
@@ -1039,7 +1044,7 @@ func (c *Controller) syncClusterUDN(ctx context.Context, cudn *userdefinednetwor
 	}
 
 	var errs []error
-	for nsToDelete := range affectedNamespaces.Difference(selectedNamespaces) {
+	for _, nsToDelete := range sets.List(affectedNamespaces.Difference(selectedNamespaces)) {
 		if err := c.deleteNAD(ctx, cudn, nsToDelete); err != nil {
 			errs = append(errs, fmt.Errorf("failed to delete NetworkAttachmentDefinition [%s/%s]: %w",
 				nsToDelete, cudnName, err))
@@ -1077,6 +1082,16 @@ func (c *Controller) getExistingNADs(cudn *userdefinednetworkv1.ClusterUserDefin
 		nads = append(nads, *nad)
 	}
 	return nads, errors.Join(errs...)
+}
+
+// releaseClusterUDN drops the in-memory state and the metrics this controller
+// holds for a CUDN. Must be called with namespaceTrackerLock held.
+func (c *Controller) releaseClusterUDN(name string) {
+	delete(c.namespaceTracker, name)
+	c.cudnMetricUncounted(name)
+	metrics.DeleteCUDNCondition(name)
+	metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(name))
+	c.releaseEVPNIDsForNetwork(name)
 }
 
 // getSelectedNamespaces list all selected namespaces according to given selector and create
