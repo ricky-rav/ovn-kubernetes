@@ -2624,6 +2624,58 @@ var _ = Describe("User Defined Network Controller", func() {
 			Expect(c.namespaceTracker).ToNot(HaveKey(cudn.Name), "the CR should no longer be tracked")
 		})
 
+		DescribeTable("should clean up after a NAD create times out",
+			func(nadCreated, deleteCUDN bool) {
+				testNs := testNamespace("blue")
+				cudn := testClusterUDN("test", testNs.Name)
+				expectedNAD := testClusterUdnNAD(cudn.Name, testNs.Name)
+				c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+				nadClient := cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset)
+				nadClient.PrependReactor("create", "network-attachment-definitions", func(action testing.Action) (bool, runtime.Object, error) {
+					if nadCreated {
+						// The API server can persist the NAD before the client times out
+						// waiting for its response.
+						create := action.(testing.CreateAction)
+						Expect(nadClient.Tracker().Create(action.GetResource(), create.GetObject(), action.GetNamespace())).To(Succeed())
+					}
+					return true, &netv1.NetworkAttachmentDefinition{}, apierrors.NewTimeoutError("NAD create response timed out", 0)
+				})
+
+				_, err := c.syncClusterUDN(context.Background(), cudn, nil)
+				Expect(apierrors.IsTimeout(err)).To(BeTrue())
+
+				if deleteCUDN {
+					By("deleting the CUDN before its creation is retried")
+					cudn.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				} else {
+					By("terminating the namespace before its creation is retried")
+					testNs.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+					_, err = cs.KubeClient.CoreV1().Namespaces().Update(context.Background(), testNs, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func() bool {
+						ns, err := c.namespaceInformer.Lister().Get(testNs.Name)
+						return err == nil && !ns.DeletionTimestamp.IsZero()
+					}).Should(BeTrue())
+				}
+
+				nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nads).To(BeEmpty())
+				_, err = nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), expectedNAD.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the NAD must not remain protected after cleanup")
+				Expect(c.namespaceTracker[cudn.Name]).To(BeEmpty())
+				if deleteCUDN {
+					Expect(cudn.Finalizers).To(BeEmpty())
+				}
+			},
+			Entry("CUDN deleted after the NAD was persisted", true, true),
+			Entry("CUDN deleted without the NAD being persisted", false, true),
+			Entry("namespace terminating after the NAD was persisted", true, false),
+			Entry("namespace terminating without the NAD being persisted", false, false),
+		)
+
 		It("when adding the finalizer fails and the CR is then gone, should stop tracking the CR", func() {
 			cudn := testClusterUDN("test", "blue")
 			cudn.Finalizers = nil
